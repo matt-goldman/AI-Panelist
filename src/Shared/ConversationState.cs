@@ -10,6 +10,7 @@ public record ConversationState(
 public enum AiPanelistState
 {
     Idle,
+    Listening,
     Thinking,
     Speaking
 }

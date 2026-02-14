@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<mct:Popup x:Class="UI_Common.Popups.IPAddressPopup"
+           xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+           xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+           xmlns:mct="http://schemas.microsoft.com/dotnet/2022/maui/toolkit"
+           xmlns:system="clr-namespace:System;assembly=mscorlib"
+           Padding="10"
+           x:TypeArguments="system:String">
+    <VerticalStackLayout Spacing="6">
+        <Label Text="Host IP Address Required"
+               FontSize="Title"
+               FontAttributes="Bold"
+               VerticalOptions="Center"
+               HorizontalOptions="Center" />
+
+        <Label Text="The host IP address is either missing, or the provided host is not responding. Please provide the IP address." />
+
+        <Entry x:Name="IPAddressEntry"
+               Placeholder="Host IP Address"
+               Keyboard="Text" />
+
+        <Label x:Name="ErrorLabel"
+               TextColor="Red"
+               IsVisible="False" />
+
+        <Button Text="OK" Clicked="OkButton_Clicked" />
+    </VerticalStackLayout>
+</mct:Popup>
