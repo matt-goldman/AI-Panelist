@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Bubbles/Bubbles.csproj" />
+    <Project Path="src/ModeratorApp/ModeratorApp.csproj" />
+  </Folder>
+</Solution>
