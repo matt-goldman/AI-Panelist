@@ -9,6 +9,12 @@
         <skia:SKConfettiView x:Name="BubbleConfetti"
                              HorizontalOptions="Fill"
                              VerticalOptions="Fill" />
+
+        <skia:SKLottieView HorizontalOptions="Center"
+                           VerticalOptions="Center"
+                           WidthRequest="500"
+                           HeightRequest="500"
+                           Source="ai.json" />
     </Grid>
 
 </ContentPage>
