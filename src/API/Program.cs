@@ -6,6 +6,8 @@ var builder = WebApplication.CreateBuilder(args);
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
+builder.Services.AddSignalR();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -19,6 +21,6 @@ else
     app.UseHttpsRedirection();
 }
 
-app.MapHub<BubblesHub>("/bubblesHub");
+app.MapHub<BubblesHub>("/bubbles");
 
 app.Run();

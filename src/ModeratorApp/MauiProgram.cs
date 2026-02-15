@@ -19,6 +19,8 @@ public static class MauiProgram
 			.AddUICommon();
 #pragma warning restore MCT001 // `.UseMauiCommunityToolkit()` Not Found on MauiAppBuilder
 
+		builder.Services.AddTransient<MainPage>();
+
 #if DEBUG
         builder.Logging.AddDebug();
 #endif

@@ -3,19 +3,25 @@
              xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:skia="clr-namespace:SkiaSharp.Extended.UI.Controls;assembly=SkiaSharp.Extended.UI"
-             Background="{StaticResource BeerBackground}">
+             Background="{DynamicResource BeerBackground}">
 
     <Grid HorizontalOptions="Fill" VerticalOptions="Fill">
         <skia:SKConfettiView x:Name="BubbleConfetti"
                              HorizontalOptions="Fill"
                              VerticalOptions="Fill" />
 
-        <skia:SKLottieView HorizontalOptions="Center"
+        <skia:SKLottieView x:Name="BubblesState"
+                           HorizontalOptions="Center"
                            VerticalOptions="Center"
-                           WidthRequest="500"
-                           HeightRequest="500"
-                           RepeatCount="-1"
-                           Source="ai.json" />
+                           WidthRequest="650"
+                           HeightRequest="650"
+                           RepeatCount="-1" />
+
+        <Image Margin="20"
+               Source="bdd_logo.png"
+               WidthRequest="400"
+               HorizontalOptions="Start"
+               VerticalOptions="Start" />
     </Grid>
 
 </ContentPage>

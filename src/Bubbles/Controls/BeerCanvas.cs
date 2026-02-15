@@ -6,10 +6,6 @@ namespace Bubbles.Controls;
 
 internal class BeerCanvas : SKCanvasView
 {
-    public event EventHandler? AnimationCompleted;
-
-    private bool _isFoamAnimating = false;
-
     private SKColor _gradientStart;
     private SKColor _gradientEnd;
 
@@ -50,11 +46,5 @@ internal class BeerCanvas : SKCanvasView
                 SKShaderTileMode.Clamp)
         };
         canvas.DrawRect(beerRect, beerPaint);
-    }
-
-    private void StartFoamAnimation()
-    {
-        _isFoamAnimating = true;
-        AnimationCompleted?.Invoke(this, EventArgs.Empty);
     }
 }
