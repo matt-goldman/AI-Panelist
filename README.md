@@ -84,15 +84,70 @@ If it doesn’t: we thank it for its service and move on.
 
 ```yaml
 /docs
-software-spec.md
-hardware-setup.md
-prompts.md
+  software-spec.md              # Original requirements
+  hardware-setup.md             # Hardware configuration
+  prompts.md                    # LLM prompt templates
+  local-pipeline-guide.md       # 🆕 Local AI pipeline architecture & developer guide
+  example-implementations.md    # 🆕 Real implementation examples (Whisper, Ollama, etc.)
 
 /src
-LaptopHost/
-BubblesDisplay/
-ModeratorControl/
+  /API                          # ASP.NET Core coordination layer
+    /Services
+      /Interfaces               # Service abstractions (STT, LLM, TTS)
+      /Implementations          # Mock & real implementations
+      AIPanelistOrchestrator.cs # Main pipeline coordinator
+      TranscriptBufferService.cs # Rolling transcript buffer
+    /Controllers
+      PanelistController.cs     # REST API endpoints
+    /Hubs
+      BubblesHub.cs            # SignalR hub for state broadcasting
+  
+  /Bubbles                      # .NET MAUI display app (iPad)
+  /ModeratorApp                 # .NET MAUI control app (Phone)
+  /Shared                       # Shared models and state management
 ```
+
+## Quick Start
+
+### Running the API
+
+```bash
+cd src/API
+dotnet run
+```
+
+The API starts with mock implementations by default. See [local-pipeline-guide.md](docs/local-pipeline-guide.md) for details.
+
+### Triggering a Response
+
+**Via REST API:**
+```bash
+curl -X POST http://localhost:5141/api/panelist/trigger
+```
+
+**Via Moderator App:**
+- Set panelist state to "Listening" - the API will automatically trigger a response
+
+### Testing the Pipeline
+
+The system works end-to-end with mock implementations:
+- ✅ Continuous mock transcription every 5 seconds
+- ✅ Periodic summary generation every 45 seconds
+- ✅ Full response generation pipeline (Thinking → Speaking → Listening)
+- ✅ State broadcasting via SignalR
+- ✅ Cancel/disable functionality
+
+### Swapping to Real Implementations
+
+See [example-implementations.md](docs/example-implementations.md) for complete examples of:
+- **Whisper.net** - Local STT with NAudio
+- **Ollama** - Local LLM inference
+- **Azure Cognitive Services** - High-quality TTS
+- **NAudio** - Audio device management and playback
+
+Each service can be swapped independently via dependency injection.
+
+---
 
 ## Why We Built This
 
