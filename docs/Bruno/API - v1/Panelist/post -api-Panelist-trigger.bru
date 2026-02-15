@@ -1,0 +1,36 @@
+meta {
+  name: post /api/Panelist/trigger
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/api/Panelist/trigger
+  body: none
+  auth: inherit
+}
+
+example {
+  name: 200 Response
+  description: OK
+  
+  request: {
+    url: {{baseUrl}}/api/Panelist/trigger
+    method: POST
+    mode: none
+  }
+  
+  response: {
+    status: {
+      code: 200
+      text: OK
+    }
+  
+    body: {
+      type: text
+      content: '''
+  
+      '''
+    }
+  }
+}

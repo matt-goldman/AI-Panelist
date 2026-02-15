@@ -4,16 +4,9 @@ using Shared;
 
 namespace API.Hubs;
 
-public class BubblesHub : Hub
+public class BubblesHub(AIPanelistOrchestrator orchestrator, ILogger<BubblesHub> logger) : Hub
 {
-    private readonly AIPanelistOrchestrator _orchestrator;
-    private readonly ILogger<BubblesHub> _logger;
-
-    public BubblesHub(AIPanelistOrchestrator orchestrator, ILogger<BubblesHub> logger)
-    {
-        _orchestrator = orchestrator;
-        _logger = logger;
-    }
+    private readonly ILogger<BubblesHub> _logger = logger;
 
     public async Task UpdateConversationState(ConversationState state)
     {
@@ -28,7 +21,7 @@ public class BubblesHub : Hub
         if (state == AiPanelistState.Listening)
         {
             _logger.LogInformation("Listening state received - triggering AI response");
-            await _orchestrator.TriggerResponseAsync();
+            await orchestrator.TriggerResponseAsync();
         }
         
         // Broadcast the state change (orchestrator will also update states during processing)
