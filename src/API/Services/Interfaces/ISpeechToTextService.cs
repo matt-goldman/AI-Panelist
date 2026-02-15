@@ -36,4 +36,9 @@ public class TranscriptionReceivedEventArgs : EventArgs
     public string Text { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; }
     public bool IsFinal { get; set; }
+    
+    /// <summary>
+    /// The speaker/device name associated with this transcription (for rough attribution)
+    /// </summary>
+    public string? SpeakerName { get; set; }
 }

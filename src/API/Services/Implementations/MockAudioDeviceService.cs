@@ -10,6 +10,7 @@ public class MockAudioDeviceService : IAudioDeviceService
     private readonly ILogger<MockAudioDeviceService> _logger;
     private List<AudioDeviceInfo> _selectedDevices = new();
     private List<AudioDeviceInfo>? _cachedDevices;
+    private readonly Dictionary<string, string> _displayNames = new();
 
     public MockAudioDeviceService(ILogger<MockAudioDeviceService> logger)
     {
@@ -20,6 +21,7 @@ public class MockAudioDeviceService : IAudioDeviceService
     {
         if (_cachedDevices != null)
         {
+            ApplyDisplayNames(_cachedDevices);
             return Task.FromResult(_cachedDevices);
         }
 
@@ -47,6 +49,7 @@ public class MockAudioDeviceService : IAudioDeviceService
             }
         };
 
+        ApplyDisplayNames(_cachedDevices);
         return Task.FromResult(_cachedDevices);
     }
 
@@ -76,6 +79,7 @@ public class MockAudioDeviceService : IAudioDeviceService
             GetSelectedInputDevice();
         }
 
+        ApplyDisplayNames(_selectedDevices);
         return _selectedDevices.ToList();
     }
 
@@ -115,5 +119,40 @@ public class MockAudioDeviceService : IAudioDeviceService
         }
 
         return selectedIds;
+    }
+
+    public Task<bool> SetDeviceDisplayNameAsync(string deviceId, string displayName)
+    {
+        _logger.LogInformation("Mock: Setting display name for device {DeviceId} to '{DisplayName}'", 
+            deviceId, displayName);
+
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            _displayNames.Remove(deviceId);
+        }
+        else
+        {
+            _displayNames[deviceId] = displayName;
+        }
+
+        if (_cachedDevices != null)
+        {
+            var device = _cachedDevices.FirstOrDefault(d => d.Id == deviceId);
+            if (device != null)
+            {
+                device.DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName;
+                return Task.FromResult(true);
+            }
+        }
+
+        return Task.FromResult(false);
+    }
+
+    private void ApplyDisplayNames(List<AudioDeviceInfo> devices)
+    {
+        foreach (var device in devices)
+        {
+            device.DisplayName = _displayNames.GetValueOrDefault(device.Id);
+        }
     }
 }

@@ -3,28 +3,23 @@ namespace API.Services;
 /// <summary>
 /// Manages a rolling transcript buffer with time-based expiration
 /// </summary>
-public class TranscriptBufferService
+public class TranscriptBufferService(TimeSpan bufferDuration)
 {
-    private readonly List<TranscriptEntry> _entries = new();
+    private readonly List<TranscriptEntry> _entries = [];
     private readonly object _lock = new();
-    private readonly TimeSpan _bufferDuration;
-
-    public TranscriptBufferService(TimeSpan bufferDuration)
-    {
-        _bufferDuration = bufferDuration;
-    }
 
     /// <summary>
     /// Add a new transcript entry
     /// </summary>
-    public void AddEntry(string text, DateTime timestamp)
+    public void AddEntry(string text, DateTime timestamp, string? speakerName = null)
     {
         lock (_lock)
         {
             _entries.Add(new TranscriptEntry
             {
                 Text = text,
-                Timestamp = timestamp
+                Timestamp = timestamp,
+                SpeakerName = speakerName
             });
 
             // Remove expired entries
@@ -33,19 +28,19 @@ public class TranscriptBufferService
     }
 
     /// <summary>
-    /// Get all transcript text within the buffer window
+    /// Get all transcript text within the buffer window (with speaker attribution)
     /// </summary>
     public string GetFullTranscript()
     {
         lock (_lock)
         {
             CleanupOldEntries();
-            return string.Join(" ", _entries.Select(e => e.Text));
+            return FormatTranscript(_entries);
         }
     }
 
     /// <summary>
-    /// Get recent transcript (last N seconds)
+    /// Get recent transcript (last N seconds) with speaker attribution
     /// </summary>
     public string GetRecentTranscript(TimeSpan recentWindow)
     {
@@ -53,7 +48,7 @@ public class TranscriptBufferService
         {
             var cutoff = DateTime.UtcNow - recentWindow;
             var recentEntries = _entries.Where(e => e.Timestamp >= cutoff).ToList();
-            return string.Join(" ", recentEntries.Select(e => e.Text));
+            return FormatTranscript(recentEntries);
         }
     }
 
@@ -68,9 +63,51 @@ public class TranscriptBufferService
         }
     }
 
+    private static string FormatTranscript(List<TranscriptEntry> entries)
+    {
+        if (entries.Count == 0)
+            return string.Empty;
+
+        // Group consecutive entries by speaker to reduce noise
+        var formattedParts = new List<string>();
+        string? currentSpeaker = null;
+        var currentTexts = new List<string>();
+
+        foreach (var entry in entries)
+        {
+            if (entry.SpeakerName != currentSpeaker && currentTexts.Count > 0)
+            {
+                // Flush current speaker's text
+                formattedParts.Add(FormatSpeakerBlock(currentSpeaker, currentTexts));
+                currentTexts.Clear();
+            }
+
+            currentSpeaker = entry.SpeakerName;
+            currentTexts.Add(entry.Text);
+        }
+
+        // Flush remaining
+        if (currentTexts.Count > 0)
+        {
+            formattedParts.Add(FormatSpeakerBlock(currentSpeaker, currentTexts));
+        }
+
+        return string.Join("\n", formattedParts);
+    }
+
+    private static string FormatSpeakerBlock(string? speakerName, List<string> texts)
+    {
+        var combinedText = string.Join(" ", texts);
+        
+        if (string.IsNullOrWhiteSpace(speakerName))
+            return combinedText;
+        
+        return $"[{speakerName}]: {combinedText}";
+    }
+
     private void CleanupOldEntries()
     {
-        var cutoff = DateTime.UtcNow - _bufferDuration;
+        var cutoff = DateTime.UtcNow - bufferDuration;
         _entries.RemoveAll(e => e.Timestamp < cutoff);
     }
 
@@ -78,5 +115,6 @@ public class TranscriptBufferService
     {
         public string Text { get; set; } = string.Empty;
         public DateTime Timestamp { get; set; }
+        public string? SpeakerName { get; set; }
     }
 }

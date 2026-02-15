@@ -138,5 +138,6 @@ app.MapHub<BubblesHub>("/bubbles");
 
 // Map minimal API endpoints
 app.MapPanelistEndpoints();
+app.MapAudioDevicesEndpoints();
 
 app.Run();
