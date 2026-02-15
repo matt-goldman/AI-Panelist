@@ -2,13 +2,16 @@
 
 public partial class App : Application
 {
-	public App()
+    private readonly MainPage page;
+
+    public App(MainPage page)
 	{
 		InitializeComponent();
-	}
+        this.page = page;
+    }
 
 	protected override Window CreateWindow(IActivationState? activationState)
 	{
-		return new Window(new MainPage());
+		return new Window(page);
 	}
 }

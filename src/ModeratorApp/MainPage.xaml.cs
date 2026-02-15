@@ -1,23 +1,40 @@
-﻿namespace ModeratorApp;
+﻿using UI_Common.Services;
+
+namespace ModeratorApp;
 
 public partial class MainPage : ContentPage
 {
-	int count = 0;
+    private readonly ConversationStateService service;
 
-	public MainPage()
+    public MainPage(ConversationStateService service)
 	{
 		InitializeComponent();
-	}
+        this.service = service;
+    }
 
-	private void OnCounterClicked(object? sender, EventArgs e)
-	{
-		count++;
+    protected override async void OnAppearing()
+    {
+        base.OnAppearing();
+        await service.Init();
+    }
 
-		if (count == 1)
-			CounterBtn.Text = $"Clicked {count} time";
-		else
-			CounterBtn.Text = $"Clicked {count} times";
+    private void ListenBtn_Clicked(object sender, EventArgs e)
+    {
+        service.SetPanelistState(Shared.AiPanelistState.Listening);
+    }
 
-		SemanticScreenReader.Announce(CounterBtn.Text);
-	}
+    private void ThinkingButton_Clicked(object sender, EventArgs e)
+    {
+        service.SetPanelistState(Shared.AiPanelistState.Thinking);
+    }
+
+    private void SpeakingButton_Clicked(object sender, EventArgs e)
+    {
+        service.SetPanelistState(Shared.AiPanelistState.Speaking);
+    }
+
+    private void IdleButton_Clicked(object sender, EventArgs e)
+    {
+        service.SetPanelistState(Shared.AiPanelistState.Idle);
+    }   
 }

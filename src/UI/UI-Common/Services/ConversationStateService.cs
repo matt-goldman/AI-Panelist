@@ -16,6 +16,8 @@ public class ConversationStateService()
 
     public async Task Init()
     {
+        if (_hubConnection?.State == HubConnectionState.Connected) return;
+
         var apiIpAddress = Preferences.Get("API", "notset");
 
         if (apiIpAddress == "notset")
@@ -23,20 +25,20 @@ public class ConversationStateService()
             apiIpAddress = await PromptUserForUpAddresss();
         }
 
-        bool connected = false;
+        var connected = await TryConnectHub(apiIpAddress);
 
         while (connected == false)
         {
-            if (await TryConnectHub(apiIpAddress))
-            {
-                connected = true;
-            }
-            else
-            {
-                apiIpAddress = await PromptUserForUpAddresss();
-            }
+            apiIpAddress = await PromptUserForUpAddresss();
+            connected = await TryConnectHub(apiIpAddress);
         }
     }
+
+    public Task SetPanelistState(AiPanelistState state)
+        => _hubConnection?.SendAsync(Shared.Messages.UpdatePanelState, state) ?? Task.CompletedTask;
+
+    public Task SetConversationState(ConversationState state)
+        => _hubConnection?.SendAsync(Shared.Messages.UpdateConversationState, state) ?? Task.CompletedTask;
 
     private static async Task<string> PromptUserForUpAddresss()
     {
@@ -61,7 +63,7 @@ public class ConversationStateService()
         {
             await _hubConnection.StartAsync();
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             return false;
         }
@@ -69,6 +71,8 @@ public class ConversationStateService()
         _hubConnection.On<AiPanelistState>(Shared.Messages.UpdatePanelState, state => PanelistState.SetValue(state));
 
         _hubConnection.On<ConversationState>(Shared.Messages.UpdateConversationState, state => ConversationState.SetValue(state));
+
+        Preferences.Set("API", hubAddress);
 
         return true;
     }

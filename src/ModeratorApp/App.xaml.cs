@@ -1,16 +1,17 @@
-﻿using Microsoft.Extensions.DependencyInjection;
-
-namespace ModeratorApp;
+﻿namespace ModeratorApp;
 
 public partial class App : Application
 {
-	public App()
+    private readonly MainPage page;
+
+    public App(MainPage page)
 	{
 		InitializeComponent();
-	}
+        this.page = page;
+    }
 
 	protected override Window CreateWindow(IActivationState? activationState)
 	{
-		return new Window(new AppShell());
+		return new Window(page);
 	}
 }
