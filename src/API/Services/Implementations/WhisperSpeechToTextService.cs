@@ -15,7 +15,7 @@ public class WhisperSpeechToTextService : ISpeechToTextService, IDisposable
     private readonly IAudioDeviceService _audioDeviceService;
     private readonly IConfiguration _configuration;
     
-    private readonly List<DeviceCapture> _deviceCaptures = new();
+    private readonly List<DeviceCapture> _deviceCaptures = [];
     private WhisperFactory? _whisperFactory;
     private CancellationTokenSource? _cts;
     private bool _isPaused;
@@ -177,11 +177,9 @@ public class WhisperSpeechToTextService : ISpeechToTextService, IDisposable
     /// <summary>
     /// Encapsulates audio capture and transcription for a single device
     /// </summary>
-    private class DeviceCapture : IDisposable
+    private class DeviceCapture(AudioDeviceInfo device, WhisperFactory whisperFactory, ILogger logger) : IDisposable
     {
-        private readonly AudioDeviceInfo _device;
-        private readonly WhisperFactory _whisperFactory;
-        private readonly ILogger _logger;
+        private readonly ILogger _logger = logger;
         
         private WaveInEvent? _waveIn;
         private WhisperProcessor? _processor;
@@ -192,30 +190,23 @@ public class WhisperSpeechToTextService : ISpeechToTextService, IDisposable
 
         public event EventHandler<TranscriptionReceivedEventArgs>? TranscriptionReceived;
 
-        public DeviceCapture(AudioDeviceInfo device, WhisperFactory whisperFactory, ILogger logger)
-        {
-            _device = device;
-            _whisperFactory = whisperFactory;
-            _logger = logger;
-        }
-
         public void Start(CancellationToken cancellationToken, Func<bool> isPausedCheck)
         {
             _isPausedCheck = isPausedCheck;
             
             // Create a dedicated processor for this device
-            _processor = _whisperFactory.CreateBuilder()
+            _processor = whisperFactory.CreateBuilder()
                 .WithLanguage("en")
                 .WithPrompt("This is a technology panel discussion.")
                 .Build();
 
-            var deviceNumber = int.Parse(_device.Id);
+            var deviceNumber = int.Parse(device.Id);
 
             _waveIn = new WaveInEvent
             {
-                DeviceNumber = deviceNumber,
-                WaveFormat = new WaveFormat(16000, 16, 1), // 16kHz, 16-bit, mono (Whisper standard)
-                BufferMilliseconds = 100
+                DeviceNumber        = deviceNumber,
+                WaveFormat          = new WaveFormat(16000, 16, 1), // 16kHz, 16-bit, mono (Whisper standard)
+                BufferMilliseconds  = 100
             };
 
             _waveIn.DataAvailable += OnAudioDataAvailable;
@@ -224,18 +215,18 @@ public class WhisperSpeechToTextService : ISpeechToTextService, IDisposable
                 if (e.Exception != null)
                 {
                     _logger.LogError(e.Exception, "Audio recording stopped with error on device {DeviceName}", 
-                        _device.Name);
+                        device.Name);
                 }
                 else
                 {
                     _logger.LogInformation("Audio recording stopped normally on device {DeviceName}", 
-                        _device.Name);
+                        device.Name);
                 }
             };
             
             _waveIn.StartRecording();
             _logger.LogInformation("Audio capture started on device {DeviceName} (ID: {DeviceId})", 
-                _device.Name, _device.Id);
+                device.Name, device.Id);
 
             // Start transcription loop for this device
             _transcriptionTask = Task.Run(() => TranscriptionLoopAsync(cancellationToken), cancellationToken);
@@ -306,7 +297,7 @@ public class WhisperSpeechToTextService : ISpeechToTextService, IDisposable
                         if (!string.IsNullOrWhiteSpace(text))
                         {
                             _logger.LogDebug("Whisper transcription from {DeviceName}: {Text}", 
-                                _device.Name, text);
+                                device.Name, text);
                             
                             TranscriptionReceived?.Invoke(this, new TranscriptionReceivedEventArgs
                             {
@@ -324,7 +315,7 @@ public class WhisperSpeechToTextService : ISpeechToTextService, IDisposable
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Error during Whisper transcription on device {DeviceName}", 
-                        _device.Name);
+                        device.Name);
                     // Continue processing despite errors
                 }
             }
