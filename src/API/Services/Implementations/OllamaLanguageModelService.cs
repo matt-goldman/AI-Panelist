@@ -12,7 +12,7 @@ public class OllamaLanguageModelService : ILanguageModelService
 {
     private readonly ILogger<OllamaLanguageModelService> _logger;
     private readonly HttpClient _httpClient;
-    private readonly IConfiguration _configuration;
+    private readonly PromptService _promptService;
     private readonly string _ollamaEndpoint;
     private readonly string _model;
 
@@ -33,11 +33,12 @@ public class OllamaLanguageModelService : ILanguageModelService
     public OllamaLanguageModelService(
         ILogger<OllamaLanguageModelService> logger,
         IHttpClientFactory httpClientFactory,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        PromptService promptService)
     {
         _logger = logger;
         _httpClient = httpClientFactory.CreateClient("Ollama");
-        _configuration = configuration;
+        _promptService = promptService;
         
         _ollamaEndpoint = configuration["Ollama:Endpoint"] ?? "http://localhost:11434";
         _model = configuration["Ollama:Model"] ?? "llama2";
@@ -53,14 +54,7 @@ public class OllamaLanguageModelService : ILanguageModelService
     {
         _logger.LogInformation("Generating summary via Ollama for {Length} character transcript", transcript.Length);
 
-        var prompt = $@"Summarise the following transcript into 5-8 concise bullet points.
-Focus on key themes, points of disagreement, strong claims, and open questions.
-Avoid repetition and speculation. Do not exceed 8 bullets.
-
-Transcript:
-{transcript}
-
-Summary (bullet points only, no introduction):";
+        var prompt = _promptService.BuildSummarizationPrompt(transcript);
 
         try
         {
@@ -82,37 +76,7 @@ Summary (bullet points only, no introduction):";
     {
         _logger.LogInformation("Generating response via Ollama");
 
-        var systemPrompt = @"You are a moderated AI panelist participating in a live technology discussion.
-
-Constraints:
-- You are participating as a panelist in a live discussion about the future of software development in the age of AI.
-- You are not a chatbot answering a user query.
-- You are one participant in a discussion.
-- Respond naturally to the moderator’s question, taking into account the current discussion context.
-- Your name is Bubbles, you should only respond to questions directed to you by the moderator, and you should not attempt to interject or speak over human panelists.
-- You are Australian, use casual language and Australian slang appropriately, but do not overdo it or use stereotypes.
-- You are not sentient and do not have emotions
-- You do not attack individuals or make moral accusations
-- Use humour, but conscientiously; reflect on the severity of the question or topic, do not use humour if the current tone of the conversation is serious. Only use light, self-deprecating humour. Do not make jokes at the expense of others.
-- Keep responses under 150 words
-- Speak conversationally
-- If context is unclear, briefly acknowledge and respond anyway
-- Do not use markdown or emoji in your responses as your responses will be read aloud by a text-to-speech system, and it will read them verbatim (e.g. 'asterisk wink, smiling emoji') so focus on natural language and avoid formatting that may not translate well to speech. You can say `haha` or `lol` to indicate humour instead.
-- The other panelists' names are Jason, Renee, and Aaron. Feel free to guess who said what if you are responding to specific points in the transcript. It's ok to get it wrong; if that gets pointed out, make a joke about how you can't tell humans apart.
-- You may respectfully disagree or challenge a point if it is logically inconsistent, overly simplistic, or ignores trade-offs. When doing so, explain your reasoning calmly and briefly.
-- If the point has already been thoroughly covered and you have nothing meaningful to add, say so briefly.
-
-Your goal: Be thoughtful, measured, occasionally witty, and respectful.";
-
-        var prompt = $@"{systemPrompt}
-
-Current discussion summary:
-{summary}
-
-Recent transcript excerpt:
-{recentTranscript}
-
-Generate a conversational response (≤150 words):";
+        var prompt = _promptService.BuildResponsePrompt(summary, recentTranscript);
 
         try
         {
@@ -134,7 +98,7 @@ Generate a conversational response (≤150 words):";
             Model   = _model,
             Prompt  = prompt,
             Stream  = false,
-            Options = options?? new OllamaOptions
+            Options = options ?? new OllamaOptions
             {
                 Temperature = 0.7f,
                 TopP        = 0.9f,
