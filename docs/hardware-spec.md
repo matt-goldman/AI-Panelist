@@ -2,7 +2,7 @@
 
 ## Equipment
 
-- Beast Host laptop (high-spec GPU machine)
+- Laptop Host laptop (high-spec GPU machine)
 - iPad (Bubbles display)
 - Phone (Moderator control)
 - 2x USB-C lapel receivers
@@ -14,7 +14,7 @@
 
 ## Audio Connections
 
-All microphones connect to Beast Host.
+All microphones connect to Laptop Host.
 
 - Lapel receivers via USB-C
 - Handheld receiver via 3.5mm mic input
@@ -25,7 +25,7 @@ No audio splitting required.
 
 ## Recording (OBS)
 
-OBS runs on Beast Host.
+OBS runs on Laptop Host.
 
 - Add each mic as Audio Input Capture
 - Enable multitrack recording
@@ -50,7 +50,7 @@ So can Bubbles.
 
 ## AI Voice Output
 
-Beast Host → Wireless speaker  
+Laptop Host → Wireless speaker  
 Speaker placed near iPad.
 
 AI voice does not need to be recorded live.
@@ -62,7 +62,7 @@ Text + saved WAV is sufficient.
 
 Preferred:
 - Dedicated travel router
-- Beast + iPad + Phone on same network
+- Laptop + iPad + Phone on same network
 
 Fallback:
 - Office WiFi

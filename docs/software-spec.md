@@ -17,7 +17,7 @@ It is intentionally constrained and non-autonomous.
 
 ## 2. Components
 
-### 2.1 Beast Host
+### 2.1 Laptop Host
 
 Responsibilities:
 
