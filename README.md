@@ -30,7 +30,7 @@ If it doesn’t: we thank it for its service and move on.
 
 ## High-Level Architecture
 
-**Beast Host (Laptop)**  
+**Laptop Host (Laptop)**  
 - Records mic input (via OBS)
 - Runs Whisper STT
 - Maintains rolling transcript
@@ -89,7 +89,7 @@ hardware-setup.md
 prompts.md
 
 /src
-BeastHost/
+LaptopHost/
 BubblesDisplay/
 ModeratorControl/
 ```
