@@ -116,7 +116,7 @@ cd src/API
 dotnet run
 ```
 
-The API starts with mock implementations by default. See [local-pipeline-guide.md](docs/local-pipeline-guide.md) for details.
+The API starts with **mock implementations** by default for easy testing.
 
 ### Triggering a Response
 
@@ -137,15 +137,58 @@ The system works end-to-end with mock implementations:
 - ✅ State broadcasting via SignalR
 - ✅ Cancel/disable functionality
 
-### Swapping to Real Implementations
+---
 
-See [example-implementations.md](docs/example-implementations.md) for complete examples of:
-- **Whisper.net** - Local STT with NAudio
-- **Ollama** - Local LLM inference
-- **Azure Cognitive Services** - High-quality TTS
-- **NAudio** - Audio device management and playback
+## Using Real AI Services
 
-Each service can be swapped independently via dependency injection.
+**Real implementations are now available!** 🎉
+
+The system includes production-ready implementations:
+- **Whisper.net** - Local STT with Windows audio capture (NAudio)
+- **Ollama** - Local LLM inference for summaries and responses
+- **Azure Cognitive Services** - High-quality text-to-speech
+- **Windows Audio** - Real audio device management and playback
+
+### Quick Setup Guide
+
+**See [SETUP_REAL_SERVICES.md](docs/SETUP_REAL_SERVICES.md) for complete setup instructions.**
+
+**Quick Example - Full Local Stack:**
+
+1. Install Ollama: https://ollama.ai/download
+2. Pull model: `ollama pull llama2`
+3. Start Ollama: `ollama serve`
+4. Edit `src/API/appsettings.json`:
+```json
+{
+  "Ollama": {
+    "Endpoint": "http://localhost:11434",
+    "Model": "llama2"
+  },
+  "AIPanelist": {
+    "SttServiceType": "Whisper",
+    "LlmServiceType": "Ollama",
+    "TtsServiceType": "Mock",
+    "AudioDeviceServiceType": "Windows",
+    "AudioPlaybackServiceType": "Windows"
+  }
+}
+```
+5. Run: `dotnet run`
+
+The system will:
+- Capture audio from your microphone
+- Transcribe with Whisper (auto-downloads model on first run)
+- Generate summaries and responses with Ollama
+- Broadcast states via SignalR
+
+**Configuration is simple** - just edit `appsettings.json` to switch between mock and real services. No code changes required!
+
+### Documentation
+
+- **[SETUP_REAL_SERVICES.md](docs/SETUP_REAL_SERVICES.md)** - Quick start guide for real AI services ⭐
+- **[local-pipeline-guide.md](docs/local-pipeline-guide.md)** - Architecture and developer guide
+- **[example-implementations.md](docs/example-implementations.md)** - Complete implementation examples and code
 
 ---
 
