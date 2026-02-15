@@ -1,0 +1,36 @@
+meta {
+  name: post /api/Panelist/disable
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/api/Panelist/disable
+  body: none
+  auth: inherit
+}
+
+example {
+  name: 200 Response
+  description: OK
+  
+  request: {
+    url: {{baseUrl}}/api/Panelist/disable
+    method: POST
+    mode: none
+  }
+  
+  response: {
+    status: {
+      code: 200
+      text: OK
+    }
+  
+    body: {
+      type: text
+      content: '''
+  
+      '''
+    }
+  }
+}

@@ -1,0 +1,36 @@
+meta {
+  name: post /api/Panelist/cancel
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/Panelist/cancel
+  body: none
+  auth: inherit
+}
+
+example {
+  name: 200 Response
+  description: OK
+  
+  request: {
+    url: {{baseUrl}}/api/Panelist/cancel
+    method: POST
+    mode: none
+  }
+  
+  response: {
+    status: {
+      code: 200
+      text: OK
+    }
+  
+    body: {
+      type: text
+      content: '''
+  
+      '''
+    }
+  }
+}

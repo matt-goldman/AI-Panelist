@@ -1,0 +1,47 @@
+meta {
+  name: post /api/Panelist/devices/select
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/Panelist/devices/select
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "deviceIds": []
+  }
+}
+
+example {
+  name: 200 Response
+  description: OK
+  
+  request: {
+    url: {{baseUrl}}/api/Panelist/devices/select
+    method: POST
+    mode: json
+    body:json: {
+      {
+        "deviceIds": []
+      }
+    }
+  }
+  
+  response: {
+    status: {
+      code: 200
+      text: OK
+    }
+  
+    body: {
+      type: text
+      content: '''
+  
+      '''
+    }
+  }
+}
