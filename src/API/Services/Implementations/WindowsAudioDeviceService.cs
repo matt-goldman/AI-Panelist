@@ -6,21 +6,19 @@ namespace API.Services.Implementations;
 /// <summary>
 /// Windows implementation of audio device service using NAudio
 /// </summary>
-public class WindowsAudioDeviceService : IAudioDeviceService
+public class WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger) : IAudioDeviceService
 {
-    private readonly ILogger<WindowsAudioDeviceService> _logger;
+    private readonly ILogger<WindowsAudioDeviceService> _logger = logger;
     private List<AudioDeviceInfo> _selectedDevices = new();
     private List<AudioDeviceInfo>? _cachedDevices;
-
-    public WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger)
-    {
-        _logger = logger;
-    }
+    private readonly Dictionary<string, string> _displayNames = new();
 
     public Task<List<AudioDeviceInfo>> GetInputDevicesAsync()
     {
         if (_cachedDevices != null)
         {
+            // Return cached devices with current display names applied
+            ApplyDisplayNames(_cachedDevices);
             return Task.FromResult(_cachedDevices);
         }
 
@@ -34,10 +32,12 @@ public class WindowsAudioDeviceService : IAudioDeviceService
             try
             {
                 var capabilities = WaveInEvent.GetCapabilities(i);
+                var deviceId = i.ToString();
                 _cachedDevices.Add(new AudioDeviceInfo
                 {
-                    Id = i.ToString(),
+                    Id = deviceId,
                     Name = capabilities.ProductName,
+                    DisplayName = _displayNames.GetValueOrDefault(deviceId),
                     IsDefault = i == 0 // First device is typically default
                 });
                 
@@ -80,6 +80,8 @@ public class WindowsAudioDeviceService : IAudioDeviceService
             GetSelectedInputDevice();
         }
 
+        // Apply current display names
+        ApplyDisplayNames(_selectedDevices);
         return _selectedDevices.ToList();
     }
 
@@ -128,5 +130,46 @@ public class WindowsAudioDeviceService : IAudioDeviceService
             selectedIds.Count, deviceIds.Count());
 
         return selectedIds;
+    }
+
+    public Task<bool> SetDeviceDisplayNameAsync(string deviceId, string displayName)
+    {
+        _logger.LogInformation("Setting display name for device {DeviceId} to '{DisplayName}'", 
+            deviceId, displayName);
+
+        // Store the display name
+        if (string.IsNullOrWhiteSpace(displayName))
+        {
+            _displayNames.Remove(deviceId);
+        }
+        else
+        {
+            _displayNames[deviceId] = displayName;
+        }
+
+        // Update cached devices if present
+        if (_cachedDevices != null)
+        {
+            var device = _cachedDevices.FirstOrDefault(d => d.Id == deviceId);
+            if (device != null)
+            {
+                device.DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName;
+                _logger.LogInformation("Updated display name for device '{Name}' to '{DisplayName}'", 
+                    device.Name, device.EffectiveName);
+                return Task.FromResult(true);
+            }
+        }
+
+        // Device not found in cache, but store the name for when it's enumerated
+        _logger.LogWarning("Device {DeviceId} not found in cache, display name stored for later", deviceId);
+        return Task.FromResult(false);
+    }
+
+    private void ApplyDisplayNames(List<AudioDeviceInfo> devices)
+    {
+        foreach (var device in devices)
+        {
+            device.DisplayName = _displayNames.GetValueOrDefault(device.Id);
+        }
     }
 }

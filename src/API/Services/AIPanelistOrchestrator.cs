@@ -184,8 +184,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     {
         if (e.IsFinal && !string.IsNullOrWhiteSpace(e.Text))
         {
-            _logger.LogDebug("Transcription received: {Text}", e.Text);
-            _transcriptBuffer.AddEntry(e.Text, e.Timestamp);
+            _logger.LogDebug("Transcription received from {Speaker}: {Text}", e.SpeakerName ?? "Unknown", e.Text);
+            _transcriptBuffer.AddEntry(e.Text, e.Timestamp, e.SpeakerName);
 
             // Broadcast updated transcript
             _ = BroadcastConversationStateAsync();
