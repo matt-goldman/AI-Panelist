@@ -1,4 +1,5 @@
 using API.Configuration;
+using API.Endpoints;
 using API.Hubs;
 using API.Services;
 using API.Services.Implementations;
@@ -14,12 +15,16 @@ builder.Services.AddOpenApi();
 
 builder.Services.AddSignalR();
 
-// Add controllers
-builder.Services.AddControllers();
-
 // Configure AI Panelist options
 builder.Services.Configure<AIPanelistOptions>(
     builder.Configuration.GetSection(AIPanelistOptions.SectionName));
+
+// Configure prompt configuration
+builder.Services.Configure<PromptConfiguration>(
+    builder.Configuration.GetSection(PromptConfiguration.SectionName));
+
+// Register prompt service
+builder.Services.AddSingleton<PromptService>();
 
 // Register transcript buffer service
 builder.Services.AddSingleton(sp =>
@@ -28,13 +33,6 @@ builder.Services.AddSingleton(sp =>
     return new TranscriptBufferService(TimeSpan.FromSeconds(options.TranscriptBufferSeconds));
 });
 
-// Configure HttpClient for Ollama
-builder.Services.AddHttpClient("Ollama", client =>
-{
-    var endpoint = builder.Configuration["Ollama:Endpoint"] ?? "http://localhost:11434";
-    client.BaseAddress = new Uri(endpoint);
-    client.Timeout = TimeSpan.FromMinutes(5);
-});
 
 // Register AI services based on configuration
 var options = builder.Configuration.GetSection(AIPanelistOptions.SectionName).Get<AIPanelistOptions>() 
@@ -57,6 +55,18 @@ switch (options.LlmServiceType?.ToLower())
 {
     case "ollama":
         builder.Services.AddSingleton<ILanguageModelService, OllamaLanguageModelService>();
+        // Configure HttpClient for Ollama
+        builder.Services.AddHttpClient("Ollama", client =>
+        {
+            var endpoint = builder.Configuration["Ollama:Endpoint"] ?? "http://localhost:11434";
+            client.BaseAddress = new Uri(endpoint);
+            client.Timeout = TimeSpan.FromMinutes(5);
+        });
+        break;
+    case "foundrylocal":
+        // Add Azure AI Foundry client
+        builder.AddAzureChatCompletionsClient(connectionName: "responses");
+        builder.Services.AddSingleton<ILanguageModelService, FoundryLocalLanguageModelService>();
         break;
     default:
         builder.Services.AddSingleton<ILanguageModelService, MockLanguageModelService>();
@@ -126,7 +136,7 @@ else
 
 app.MapHub<BubblesHub>("/bubbles");
 
-// Map controllers
-app.MapControllers();
+// Map minimal API endpoints
+app.MapPanelistEndpoints();
 
 app.Run();
