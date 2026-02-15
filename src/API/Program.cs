@@ -6,6 +6,8 @@ using API.Services.Interfaces;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.AddServiceDefaults();
+
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
@@ -99,6 +101,8 @@ builder.Services.AddSingleton<AIPanelistOrchestrator>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AIPanelistOrchestrator>());
 
 var app = builder.Build();
+
+app.MapDefaultEndpoints();
 
 // Log which services are being used
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
