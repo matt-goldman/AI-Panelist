@@ -84,15 +84,113 @@ If it doesn’t: we thank it for its service and move on.
 
 ```yaml
 /docs
-software-spec.md
-hardware-setup.md
-prompts.md
+  software-spec.md              # Original requirements
+  hardware-setup.md             # Hardware configuration
+  prompts.md                    # LLM prompt templates
+  local-pipeline-guide.md       # 🆕 Local AI pipeline architecture & developer guide
+  example-implementations.md    # 🆕 Real implementation examples (Whisper, Ollama, etc.)
 
 /src
-LaptopHost/
-BubblesDisplay/
-ModeratorControl/
+  /API                          # ASP.NET Core coordination layer
+    /Services
+      /Interfaces               # Service abstractions (STT, LLM, TTS)
+      /Implementations          # Mock & real implementations
+      AIPanelistOrchestrator.cs # Main pipeline coordinator
+      TranscriptBufferService.cs # Rolling transcript buffer
+    /Controllers
+      PanelistController.cs     # REST API endpoints
+    /Hubs
+      BubblesHub.cs            # SignalR hub for state broadcasting
+  
+  /Bubbles                      # .NET MAUI display app (iPad)
+  /ModeratorApp                 # .NET MAUI control app (Phone)
+  /Shared                       # Shared models and state management
 ```
+
+## Quick Start
+
+### Running the API
+
+```bash
+cd src/API
+dotnet run
+```
+
+The API starts with **mock implementations** by default for easy testing.
+
+### Triggering a Response
+
+**Via REST API:**
+```bash
+curl -X POST http://localhost:5141/api/panelist/trigger
+```
+
+**Via Moderator App:**
+- Set panelist state to "Listening" - the API will automatically trigger a response
+
+### Testing the Pipeline
+
+The system works end-to-end with mock implementations:
+- ✅ Continuous mock transcription every 5 seconds
+- ✅ Periodic summary generation every 45 seconds
+- ✅ Full response generation pipeline (Thinking → Speaking → Listening)
+- ✅ State broadcasting via SignalR
+- ✅ Cancel/disable functionality
+
+---
+
+## Using Real AI Services
+
+**Real implementations are now available!** 🎉
+
+The system includes production-ready implementations:
+- **Whisper.net** - Local STT with Windows audio capture (NAudio)
+- **Ollama** - Local LLM inference for summaries and responses
+- **Azure Cognitive Services** - High-quality text-to-speech
+- **Windows Audio** - Real audio device management and playback
+
+### Quick Setup Guide
+
+**See [SETUP_REAL_SERVICES.md](docs/SETUP_REAL_SERVICES.md) for complete setup instructions.**
+
+**Quick Example - Full Local Stack:**
+
+1. Install Ollama: https://ollama.ai/download
+2. Pull model: `ollama pull llama2`
+3. Start Ollama: `ollama serve`
+4. Edit `src/API/appsettings.json`:
+```json
+{
+  "Ollama": {
+    "Endpoint": "http://localhost:11434",
+    "Model": "llama2"
+  },
+  "AIPanelist": {
+    "SttServiceType": "Whisper",
+    "LlmServiceType": "Ollama",
+    "TtsServiceType": "Mock",
+    "AudioDeviceServiceType": "Windows",
+    "AudioPlaybackServiceType": "Windows"
+  }
+}
+```
+5. Run: `dotnet run`
+
+The system will:
+- Capture audio from your microphone
+- Transcribe with Whisper (auto-downloads model on first run)
+- Generate summaries and responses with Ollama
+- Broadcast states via SignalR
+
+**Configuration is simple** - just edit `appsettings.json` to switch between mock and real services. No code changes required!
+
+### Documentation
+
+- **[SETUP_REAL_SERVICES.md](docs/SETUP_REAL_SERVICES.md)** - Quick start guide for real AI services ⭐
+- **[local-pipeline-guide.md](docs/local-pipeline-guide.md)** - Architecture and developer guide
+- **[example-implementations.md](docs/example-implementations.md)** - Complete implementation examples and code
+
+---
 
 ## Why We Built This
 
