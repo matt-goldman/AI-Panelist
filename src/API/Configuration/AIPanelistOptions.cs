@@ -35,17 +35,27 @@ public class AIPanelistOptions
     public List<string> FillerPhraseFiles { get; set; } = new();
 
     /// <summary>
-    /// STT service implementation type
+    /// STT service implementation type (Mock, Whisper)
     /// </summary>
     public string SttServiceType { get; set; } = "Mock";
 
     /// <summary>
-    /// LLM service implementation type
+    /// LLM service implementation type (Mock, Ollama)
     /// </summary>
     public string LlmServiceType { get; set; } = "Mock";
 
     /// <summary>
-    /// TTS service implementation type
+    /// TTS service implementation type (Mock, Azure)
     /// </summary>
     public string TtsServiceType { get; set; } = "Mock";
+
+    /// <summary>
+    /// Audio device service implementation type (Mock, Windows)
+    /// </summary>
+    public string? AudioDeviceServiceType { get; set; } = "Mock";
+
+    /// <summary>
+    /// Audio playback service implementation type (Mock, Windows)
+    /// </summary>
+    public string? AudioPlaybackServiceType { get; set; } = "Mock";
 }
