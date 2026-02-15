@@ -628,6 +628,7 @@ public class NAudioDeviceService : IAudioDeviceService
 {
     private readonly ILogger<NAudioDeviceService> _logger;
     private AudioDeviceInfo? _selectedDevice;
+    private List<AudioDeviceInfo>? _cachedDevices;
 
     public NAudioDeviceService(ILogger<NAudioDeviceService> logger)
     {
@@ -636,15 +637,20 @@ public class NAudioDeviceService : IAudioDeviceService
 
     public Task<List<AudioDeviceInfo>> GetInputDevicesAsync()
     {
+        if (_cachedDevices != null)
+        {
+            return Task.FromResult(_cachedDevices);
+        }
+
         _logger.LogInformation("Enumerating audio input devices");
 
-        var devices = new List<AudioDeviceInfo>();
+        _cachedDevices = new List<AudioDeviceInfo>();
         var deviceCount = WaveInEvent.DeviceCount;
 
         for (int i = 0; i < deviceCount; i++)
         {
             var capabilities = WaveInEvent.GetCapabilities(i);
-            devices.Add(new AudioDeviceInfo
+            _cachedDevices.Add(new AudioDeviceInfo
             {
                 Id = i.ToString(),
                 Name = capabilities.ProductName,
@@ -652,26 +658,30 @@ public class NAudioDeviceService : IAudioDeviceService
             });
         }
 
-        _logger.LogInformation("Found {Count} audio input devices", devices.Count);
-        return Task.FromResult(devices);
+        _logger.LogInformation("Found {Count} audio input devices", _cachedDevices.Count);
+        return Task.FromResult(_cachedDevices);
     }
 
     public AudioDeviceInfo? GetSelectedInputDevice()
     {
         if (_selectedDevice == null)
         {
-            var devices = GetInputDevicesAsync().Result;
-            _selectedDevice = devices.FirstOrDefault(d => d.IsDefault);
+            // Initialize cache on first access (safe since WaveInEvent operations are synchronous)
+            if (_cachedDevices == null)
+            {
+                _cachedDevices = GetInputDevicesAsync().GetAwaiter().GetResult();
+            }
+            _selectedDevice = _cachedDevices.FirstOrDefault(d => d.IsDefault);
         }
 
         return _selectedDevice;
     }
 
-    public Task<bool> SelectInputDeviceAsync(string deviceId)
+    public async Task<bool> SelectInputDeviceAsync(string deviceId)
     {
         _logger.LogInformation("Selecting audio input device: {DeviceId}", deviceId);
 
-        var devices = GetInputDevicesAsync().Result;
+        var devices = await GetInputDevicesAsync();
         _selectedDevice = devices.FirstOrDefault(d => d.Id == deviceId);
 
         if (_selectedDevice != null)
@@ -683,7 +693,7 @@ public class NAudioDeviceService : IAudioDeviceService
             _logger.LogWarning("Device not found: {DeviceId}", deviceId);
         }
 
-        return Task.FromResult(_selectedDevice != null);
+        return _selectedDevice != null;
     }
 }
 ```

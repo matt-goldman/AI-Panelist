@@ -120,7 +120,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     }
 
     /// <summary>
-    /// Cancel current response and set to Overflow state
+    /// Cancel current response and return to Idle state
     /// </summary>
     public async Task CancelResponseAsync()
     {
