@@ -16,6 +16,20 @@ public class OllamaLanguageModelService : ILanguageModelService
     private readonly string _ollamaEndpoint;
     private readonly string _model;
 
+    private readonly OllamaOptions _summarisationOptions = new()
+    {
+        Temperature = 0.3f, // More focused and deterministic for summarization
+        TopP        = 0.8f,
+        NumPredict  = 200
+    };
+
+    private readonly OllamaOptions _responseGenerationOptions = new()
+    {
+        Temperature = 0.7f, // More creative and varied for responses
+        TopP        = 0.9f,
+        NumPredict  = 300
+    };
+
     public OllamaLanguageModelService(
         ILogger<OllamaLanguageModelService> logger,
         IHttpClientFactory httpClientFactory,
@@ -50,7 +64,7 @@ Summary (bullet points only, no introduction):";
 
         try
         {
-            var response = await GenerateAsync(prompt, cancellationToken);
+            var response = await GenerateAsync(prompt, cancellationToken, _summarisationOptions);
             _logger.LogDebug("Generated summary: {Summary}", response);
             return response;
         }
@@ -102,7 +116,7 @@ Generate a conversational response (≤150 words):";
 
         try
         {
-            var response = await GenerateAsync(prompt, cancellationToken);
+            var response = await GenerateAsync(prompt, cancellationToken, _responseGenerationOptions);
             _logger.LogDebug("Generated response: {Response}", response);
             return response;
         }
@@ -113,14 +127,14 @@ Generate a conversational response (≤150 words):";
         }
     }
 
-    private async Task<string> GenerateAsync(string prompt, CancellationToken cancellationToken)
+    private async Task<string> GenerateAsync(string prompt, CancellationToken cancellationToken, OllamaOptions? options = null)
     {
         var request = new OllamaGenerateRequest
         {
             Model   = _model,
             Prompt  = prompt,
             Stream  = false,
-            Options = new OllamaOptions
+            Options = options?? new OllamaOptions
             {
                 Temperature = 0.7f,
                 TopP        = 0.9f,
