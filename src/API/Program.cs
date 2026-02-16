@@ -104,9 +104,8 @@ switch (options.TtsServiceType?.ToLower())
         builder.Services.AddSingleton<ITextToSpeechService, AzureTextToSpeechService>();
         break;
     case "qwen3-tts":
-        builder.Services.AddSingleton<ITextToSpeechService, QwenTextToSpeechService>();
         // Configure HttpClient for Qwen TTS
-        builder.Services.AddHttpClient<QwenTextToSpeechService>(client =>
+        builder.Services.AddHttpClient<ITextToSpeechService, QwenTextToSpeechService>(client =>
         {
             var endpoint = builder.Configuration["QwenTts:Endpoint"] ?? "http://localhost:8000";
             client.BaseAddress = new Uri(endpoint);

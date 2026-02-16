@@ -23,9 +23,14 @@ public class QwenTextToSpeechService : ITextToSpeechService
         _client = client;
         _logger = logger;
         _logger.LogInformation("Qwen TTS initialized");
+        _logger.LogInformation("Base address for HTTP client: {BaseAddress}", _client.BaseAddress);
+        if (_client.BaseAddress is null)
+        {
+            throw new Exception("Qwen TTS HTTP client base address is null. Please check configuration.");
+        }
     }
 
-    public async Task SpeakAsync(string text, CancellationToken cancellationToken = default)
+    public async Task SpeakAsync(string text, CancellationToken cancellationToken = default, Func<Task>? onPlaybackStarting = null)
     {
         _logger.LogInformation("Qwen TTS: Speaking {Length} characters", text.Length);
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -34,12 +39,20 @@ public class QwenTextToSpeechService : ITextToSpeechService
         try
         {
             // Get audio bytes from Qwen TTS endpoint
+            _logger.LogInformation("Qwen TTS: Calling synthesis API...");
             var audioBytes = await SynthesizeAsync(text, _cts.Token);
+            _logger.LogInformation("Qwen TTS: Synthesis complete, received {Bytes} bytes", audioBytes.Length);
 
             if (_cts.Token.IsCancellationRequested)
             {
                 _logger.LogInformation("Qwen TTS: Cancelled before playback");
                 return;
+            }
+
+            // Notify caller that playback is about to start
+            if (onPlaybackStarting != null)
+            {
+                await onPlaybackStarting();
             }
 
             // Play audio to host speaker using NAudio
@@ -95,43 +108,61 @@ public class QwenTextToSpeechService : ITextToSpeechService
         return await response.Content.ReadAsByteArrayAsync(cancellationToken);
     }
 
-    private Task PlayAudioAsync(byte[] audioBytes, CancellationToken cancellationToken)
+    private async Task PlayAudioAsync(byte[] audioBytes, CancellationToken cancellationToken)
     {
         var tcs = new TaskCompletionSource();
 
-        lock (_lock)
+        // Create streams that will be kept alive until playback completes
+        var memoryStream = new MemoryStream(audioBytes);
+        WaveFileReader? waveStream = null;
+
+        try
         {
-            _waveOut = new WaveOutEvent();
-        }
+            waveStream = new WaveFileReader(memoryStream);
 
-        using var memoryStream = new MemoryStream(audioBytes);
-        using var waveStream = new WaveFileReader(memoryStream);
-
-        _waveOut.Init(waveStream);
-
-        _waveOut.PlaybackStopped += (sender, args) =>
-        {
-            if (args.Exception is not null)
-            {
-                tcs.TrySetException(args.Exception);
-            }
-            else
-            {
-                tcs.TrySetResult();
-            }
-        };
-
-        using var registration = cancellationToken.Register(() =>
-        {
             lock (_lock)
             {
-                _waveOut?.Stop();
+                _waveOut = new WaveOutEvent();
+                _waveOut.Init(waveStream);
             }
-            tcs.TrySetCanceled(cancellationToken);
-        });
 
-        _waveOut.Play();
+            _waveOut.PlaybackStopped += (sender, args) =>
+            {
+                if (args.Exception is not null)
+                {
+                    tcs.TrySetException(args.Exception);
+                }
+                else
+                {
+                    tcs.TrySetResult();
+                }
+            };
 
-        return tcs.Task;
+            using var registration = cancellationToken.Register(() =>
+            {
+                lock (_lock)
+                {
+                    _waveOut?.Stop();
+                }
+                tcs.TrySetCanceled(cancellationToken);
+            });
+
+            _logger.LogInformation("Qwen TTS: Starting audio playback");
+            _waveOut.Play();
+
+            await tcs.Task;
+        }
+        finally
+        {
+            // Dispose streams after playback completes
+            waveStream?.Dispose();
+            memoryStream.Dispose();
+
+            lock (_lock)
+            {
+                _waveOut?.Dispose();
+                _waveOut = null;
+            }
+        }
     }
 }

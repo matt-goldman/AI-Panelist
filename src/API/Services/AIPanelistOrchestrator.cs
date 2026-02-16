@@ -262,12 +262,13 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Set to Speaking state
-            await SetStateAsync(AiPanelistState.Speaking);
-
-            // Speak the response
-            _logger.LogInformation("Speaking response");
-            await _ttsService.SpeakAsync(response, cancellationToken);
+            // Speak the response - state changes to Speaking when audio playback actually starts
+            _logger.LogInformation("Starting TTS synthesis...");
+            await _ttsService.SpeakAsync(response, cancellationToken, async () =>
+            {
+                _logger.LogInformation("Audio ready, starting playback");
+                await SetStateAsync(AiPanelistState.Speaking);
+            });
 
             _logger.LogInformation("Response completed");
 
@@ -280,6 +281,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         catch (OperationCanceledException)
         {
             _logger.LogInformation("Response generation cancelled");
+            await SetStateAsync(AiPanelistState.Listening);
             await _sttService.ResumeTranscriptionAsync();
         }
         catch (Exception ex)

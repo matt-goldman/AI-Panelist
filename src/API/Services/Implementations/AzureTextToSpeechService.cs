@@ -38,7 +38,7 @@ public class AzureTextToSpeechService : ITextToSpeechService
         _logger.LogInformation("Azure TTS initialized with voice: {VoiceName}", voiceName);
     }
 
-    public async Task SpeakAsync(string text, CancellationToken cancellationToken = default)
+    public async Task SpeakAsync(string text, CancellationToken cancellationToken = default, Func<Task>? onPlaybackStarting = null)
     {
         _logger.LogInformation("Azure TTS: Speaking {Length} characters", text.Length);
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -54,6 +54,12 @@ public class AzureTextToSpeechService : ITextToSpeechService
                 _logger.LogInformation("Azure TTS: Cancellation requested");
                 // Azure SDK doesn't have direct cancellation, synthesizer disposal will stop it
             });
+
+            // Azure SDK synthesizes and plays immediately, so notify before calling
+            if (onPlaybackStarting != null)
+            {
+                await onPlaybackStarting();
+            }
 
             var result = await synthesizer.SpeakTextAsync(text);
 

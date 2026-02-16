@@ -17,7 +17,7 @@ public class MockTextToSpeechService : ITextToSpeechService
         _logger = logger;
     }
 
-    public async Task SpeakAsync(string text, CancellationToken cancellationToken = default)
+    public async Task SpeakAsync(string text, CancellationToken cancellationToken = default, Func<Task>? onPlaybackStarting = null)
     {
         _logger.LogInformation("Mock TTS: Speaking {Length} characters", text.Length);
         _speakCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -30,6 +30,12 @@ public class MockTextToSpeechService : ITextToSpeechService
             var durationMs = wordCount * 100;
 
             _logger.LogDebug("Mock TTS: Simulating {Duration}ms of speech for {Words} words", durationMs, wordCount);
+
+            // Notify caller that playback is about to start
+            if (onPlaybackStarting != null)
+            {
+                await onPlaybackStarting();
+            }
 
             await Task.Delay(durationMs, _speakCts.Token);
         }
