@@ -54,8 +54,9 @@ public partial class DevicesPage : ContentPage
                     
                     if (success)
                     {
-                        device.DisplayName = displayName;
                         await DisplayAlert("Success", "Device display name updated", "OK");
+                        // Reload devices to reflect the updated state
+                        await LoadDevicesAsync();
                     }
                     else
                     {

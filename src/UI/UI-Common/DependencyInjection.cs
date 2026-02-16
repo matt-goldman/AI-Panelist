@@ -10,7 +10,7 @@ public static class DependencyInjection
     {
         builder.UseMauiCommunityToolkit();
         builder.Services.AddSingleton<ConversationStateService>();
-        builder.Services.AddSingleton<DeviceService>();
+        builder.Services.AddHttpClient<DeviceService>();
         builder.Services.AddTransient<DevicesPage>();
 
         return builder;
