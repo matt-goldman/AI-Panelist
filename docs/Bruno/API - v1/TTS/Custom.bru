@@ -1,0 +1,24 @@
+meta {
+  name: Custom
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{ttsUrl}}/tts/custom
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "text": "Hello, testing built-in voice",
+    "language": "English",
+    "speaker": "Ethan"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

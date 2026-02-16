@@ -1,0 +1,22 @@
+meta {
+  name: CoquiTTS Generate
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{ttsUrl}}/tts/custom
+  body: json
+  auth: inherit
+}
+
+body:json {
+  {
+    "text": "Guday everyone, I'm Bubbles, your AI panelist for this evening!"
+  }
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}

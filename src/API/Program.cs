@@ -79,6 +79,16 @@ switch (options.TtsServiceType?.ToLower())
     case "azure":
         builder.Services.AddSingleton<ITextToSpeechService, AzureTextToSpeechService>();
         break;
+    case "qwen3-tts":
+        builder.Services.AddSingleton<ITextToSpeechService, QwenTextToSpeechService>();
+        // Configure HttpClient for Qwen TTS
+        builder.Services.AddHttpClient<QwenTextToSpeechService>(client =>
+        {
+            var endpoint = builder.Configuration["QwenTts:Endpoint"] ?? "http://localhost:8000";
+            client.BaseAddress = new Uri(endpoint);
+            client.Timeout = TimeSpan.FromMinutes(5);
+        });
+        break;
     default:
         builder.Services.AddSingleton<ITextToSpeechService, MockTextToSpeechService>();
         break;
