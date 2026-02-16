@@ -1,4 +1,5 @@
 using API.Services.Interfaces;
+using Microsoft.Extensions.AI;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -11,10 +12,13 @@ namespace API.Services.Implementations;
 public class OllamaLanguageModelService : ILanguageModelService
 {
     private readonly ILogger<OllamaLanguageModelService> _logger;
-    private readonly HttpClient _httpClient;
+    private readonly IChatClient? chatClient;
+    private readonly HttpClient? _httpClient;
     private readonly PromptService _promptService;
-    private readonly string _ollamaEndpoint;
-    private readonly string _model;
+    private readonly string? _ollamaEndpoint;
+    private readonly string? _model;
+
+    private bool useChatClient;
 
     private readonly OllamaOptions _summarisationOptions = new()
     {
@@ -48,6 +52,22 @@ public class OllamaLanguageModelService : ILanguageModelService
         
         _logger.LogInformation("Ollama service initialized with endpoint {Endpoint} and model {Model}", 
             _ollamaEndpoint, _model);
+
+        useChatClient = false;
+    }
+
+    public OllamaLanguageModelService(
+        ILogger<OllamaLanguageModelService> loger,
+        IChatClient chatClient,
+        PromptService promptService)
+    {
+        _logger = loger;
+        this.chatClient = chatClient;
+        _promptService = promptService;
+
+        _logger.LogInformation("Ollama service initialized with IChatClient");
+
+        useChatClient = true;
     }
 
     public async Task<string> GenerateSummaryAsync(string transcript, CancellationToken cancellationToken = default)
@@ -93,6 +113,65 @@ public class OllamaLanguageModelService : ILanguageModelService
 
     private async Task<string> GenerateAsync(string prompt, CancellationToken cancellationToken, OllamaOptions? options = null)
     {
+        if (useChatClient)
+        {
+            return await GenerateChatClientResponseAsync(prompt, cancellationToken, options);
+        }
+        else
+        {
+            return await GenerateHttpClientResponseAsync(prompt, cancellationToken, options);
+        }
+    }
+
+    private async Task<string> GenerateChatClientResponseAsync(string prompt, CancellationToken cancellationToken, OllamaOptions? options = null)
+    {
+        if (chatClient == null)
+        {
+            _logger.LogError("ChatClient is not initialized");
+            throw new InvalidOperationException("ChatClient is not available for generating responses.");
+        }
+
+        var chatOptions = new ChatOptions
+        {
+            Temperature     = options?.Temperature ?? 0.7f,
+            TopP            = options?.TopP ?? 0.9f,
+            MaxOutputTokens = options?.NumPredict
+        };
+
+        try
+        {
+            var response = await chatClient.GetResponseAsync(prompt, chatOptions, cancellationToken);
+
+            if (response.Messages.Count == 0)
+            {
+                _logger.LogWarning("ChatClient returned no messages");
+                return string.Empty;
+            }
+
+            var content = response.Messages[^1].Text;
+            return content?.Trim() ?? string.Empty;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating response via ChatClient");
+            throw;
+        }
+    }
+
+    private async Task<string> GenerateHttpClientResponseAsync(string prompt, CancellationToken cancellationToken, OllamaOptions? options = null)
+    {
+        if (string.IsNullOrEmpty(_model))
+        {
+            _logger.LogError("Ollama model is not configured");
+            throw new InvalidOperationException("Ollama model is not specified in configuration.");
+        }
+
+        if (_httpClient is null)
+        {
+            _logger.LogError("HttpClient is not initialized");
+            throw new InvalidOperationException("HttpClient is not available for generating responses.");
+        }
+
         var request = new OllamaGenerateRequest
         {
             Model   = _model,

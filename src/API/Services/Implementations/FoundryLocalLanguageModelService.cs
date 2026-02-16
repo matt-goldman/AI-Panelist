@@ -34,10 +34,11 @@ public class FoundryLocalLanguageModelService : ILanguageModelService
         {
             var requestOptions = new ChatCompletionsOptions
             {
-                Temperature = 0.3f, // More focused and deterministic for summarization
-                NucleusSamplingFactor = 0.8f,
-                MaxTokens = 500,
-                Messages =
+                Temperature             = 0.3f, // More focused and deterministic for summarization
+                NucleusSamplingFactor   = 0.8f,
+                MaxTokens               = 500,
+                Model                   = "gpt-oss-20b-cuda-gpu", // Specify the local model to use
+                Messages                =
                 {
                     new ChatRequestUserMessage(prompt)
                 }
@@ -68,10 +69,11 @@ public class FoundryLocalLanguageModelService : ILanguageModelService
         {
             var requestOptions = new ChatCompletionsOptions
             {
-                Temperature = 0.7f, // More creative for responses
-                NucleusSamplingFactor = 0.9f,
-                MaxTokens = 500,
-                Messages =
+                Temperature             = 0.7f, // More creative for responses
+                NucleusSamplingFactor   = 0.9f,
+                MaxTokens               = 500,
+                Model                   = "gpt-oss-20b-cuda-gpu", // Specify the local model to use
+                Messages                =
                 {
                     new ChatRequestSystemMessage(_promptService.SystemPrompt),
                     new ChatRequestUserMessage($"""

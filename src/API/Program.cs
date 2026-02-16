@@ -4,6 +4,7 @@ using API.Hubs;
 using API.Services;
 using API.Services.Implementations;
 using API.Services.Interfaces;
+using Microsoft.Extensions.AI;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -54,7 +55,6 @@ switch (options.SttServiceType?.ToLower())
 switch (options.LlmServiceType?.ToLower())
 {
     case "ollama":
-        builder.Services.AddSingleton<ILanguageModelService, OllamaLanguageModelService>();
         // Configure HttpClient for Ollama
         builder.Services.AddHttpClient("Ollama", client =>
         {
@@ -62,10 +62,34 @@ switch (options.LlmServiceType?.ToLower())
             client.BaseAddress = new Uri(endpoint);
             client.Timeout = TimeSpan.FromMinutes(5);
         });
+        // Use factory to explicitly call HttpClient constructor
+        builder.Services.AddSingleton<ILanguageModelService>(sp =>
+            new OllamaLanguageModelService(
+                sp.GetRequiredService<ILogger<OllamaLanguageModelService>>(),
+                sp.GetRequiredService<IHttpClientFactory>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetRequiredService<PromptService>()));
+        break;
+    case "ollamaaspire":
+        builder.AddOllamaApiClient("responses").AddChatClient();
+        // Use factory to explicitly call IChatClient constructor
+        builder.Services.AddSingleton<ILanguageModelService>(sp =>
+            new OllamaLanguageModelService(
+                sp.GetRequiredService<ILogger<OllamaLanguageModelService>>(),
+                sp.GetRequiredService<IChatClient>(),
+                sp.GetRequiredService<PromptService>()));
         break;
     case "foundrylocal":
         // Add Azure AI Foundry client
-        builder.AddAzureChatCompletionsClient(connectionName: "responses");
+
+        // NOTE: this doesn't work:
+        builder.AddAzureChatCompletionsClient("responses");
+        // It simply can't find the model. Doesn't work with multiple variations both here and in AppHost
+
+        // NOTE: This _might_ work, but requirees refactoring FoundryLocalLanguageModelService to use IChatClient instead:
+        // builder.AddFoundryLocalAIServices();
+        // but ultimately I stopped trying to make this work, because Aspire won't used the cached model anyway. So too many papercuts.
+
         builder.Services.AddSingleton<ILanguageModelService, FoundryLocalLanguageModelService>();
         break;
     default:

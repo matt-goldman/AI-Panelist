@@ -1,10 +1,20 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-var foundry = builder.AddAzureAIFoundry("foundry")
-    .RunAsFoundryLocal();
+// NOTE: Stopped using this because of too many problems. Clent integration doesn't work,
+// and Aspire won't use the cached model anyway, so too many papercuts to make it work. Keeping the code here for reference in case we want to try again in the future.
+//var foundry = builder.AddAzureAIFoundry("foundry")
+//    .RunAsFoundryLocal();
 
-var responses = foundry
-    .AddDeployment("responses", "gpt-oss-20b-cuda-gpu", "1", "Microsoft");
+//var responses = foundry
+//    .AddDeployment("responses", "gpt-oss-20b-cuda-gpu", "1", "Microsoft");
+
+
+var ollama = builder
+    .AddOllama("ollama")
+    .WithDataVolume() // this is how you cache the model apparently
+    .WithGPUSupport();
+
+var responses = ollama.AddModel("responses", "gpt-oss:20b");
 
 var tts = builder.AddExecutable("qwen-tts", "wsl", ".",
     "-d", "Ubuntu-22.04", "--", "bash", "-c",
