@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using Shared;
 using UI_Common.Services;
 
@@ -6,7 +7,7 @@ namespace UI_Common.Pages;
 public partial class DevicesPage : ContentPage
 {
     private readonly DeviceService _deviceService;
-    public List<AudioDeviceInfo> Devices { get; set; } = new();
+    public ObservableCollection<AudioDeviceInfo> Devices { get; set; } = new();
 
     public DevicesPage(DeviceService deviceService)
     {
@@ -30,8 +31,12 @@ public partial class DevicesPage : ContentPage
     {
         try
         {
-            Devices = await _deviceService.GetDevicesAsync();
-            OnPropertyChanged(nameof(Devices));
+            var devices = await _deviceService.GetDevicesAsync();
+            Devices.Clear();
+            foreach (var device in devices)
+            {
+                Devices.Add(device);
+            }
         }
         catch (Exception ex)
         {
