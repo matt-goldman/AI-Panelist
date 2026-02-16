@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<Shell xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+<Shell x:Class="ModeratorApp.AppShell"
+       xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
        xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
        xmlns:local="clr-namespace:ModeratorApp"
-       xmlns:pages="clr-namespace:UI_Common.Pages;assembly=UI-Common"
-       x:Class="ModeratorApp.AppShell"
+       xmlns:pages="clr-namespace:ModeratorApp.Pages;assembly=ModeratorApp"
        Title="AI Panelist Moderator">
 
     <TabBar>

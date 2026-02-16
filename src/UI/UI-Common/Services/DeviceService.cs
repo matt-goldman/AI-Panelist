@@ -6,14 +6,8 @@ namespace UI_Common.Services;
 /// <summary>
 /// Service for managing audio devices via the API
 /// </summary>
-public class DeviceService
+public class DeviceService(HttpClient httpClient)
 {
-    private readonly HttpClient _httpClient;
-
-    public DeviceService(HttpClient httpClient)
-    {
-        _httpClient = httpClient;
-    }
 
     /// <summary>
     /// Get list of all available audio devices
@@ -25,13 +19,13 @@ public class DeviceService
         
         try
         {
-            var devices = await _httpClient.GetFromJsonAsync<List<AudioDeviceInfo>>(url);
-            return devices ?? new List<AudioDeviceInfo>();
+            var devices = await httpClient.GetFromJsonAsync<List<AudioDeviceInfo>>(url);
+            return devices ?? [];
         }
         catch (Exception)
         {
             // Return empty list on error - caller can handle appropriately
-            return new List<AudioDeviceInfo>();
+            return [];
         }
     }
 
@@ -46,7 +40,7 @@ public class DeviceService
         try
         {
             var request = new { DisplayName = displayName };
-            var response = await _httpClient.PostAsJsonAsync(url, request);
+            var response = await httpClient.PostAsJsonAsync(url, request);
             return response.IsSuccessStatusCode;
         }
         catch (Exception)

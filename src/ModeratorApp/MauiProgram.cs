@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.Logging;
+using ModeratorApp.Pages;
 using UI_Common;
 
 namespace ModeratorApp;
@@ -19,7 +20,8 @@ public static class MauiProgram
 			.AddUICommon();
 #pragma warning restore MCT001 // `.UseMauiCommunityToolkit()` Not Found on MauiAppBuilder
 
-		builder.Services.AddTransient<ModerationPage>();
+		builder.Services.AddTransient<DevicesPage>();
+        builder.Services.AddTransient<ModerationPage>();
 		builder.Services.AddTransient<AppShell>();
 
 #if DEBUG

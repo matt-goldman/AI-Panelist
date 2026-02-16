@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+<ContentPage x:Class="ModeratorApp.Pages.DevicesPage"
+             xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             x:Class="UI_Common.Pages.DevicesPage"
+             x:Name="DevicesPageRef"
              Title="Devices">
     <ScrollView>
         <VerticalStackLayout Padding="30,0" Spacing="25">
@@ -9,8 +10,7 @@
                    Style="{DynamicResource Headline}"
                    SemanticProperties.HeadingLevel="Level1" />
 
-            <Label Text="Manage audio input devices and assign display names"
-                   Margin="0,0,0,10" />
+            <Label Margin="0,0,0,10" Text="Manage audio input devices and assign display names" />
 
             <Button x:Name="RefreshButton"
                     Text="Refresh Devices"
@@ -22,36 +22,37 @@
                             ItemsSource="{Binding Devices}">
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
-                        <Grid Padding="10" RowSpacing="5" ColumnSpacing="10">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
+                        <Grid Padding="10"
+                              RowSpacing="5"
+                              ColumnSpacing="10"
+                              RowDefinitions="Auto, Auto, Auto, Auto"
+                              ColumnDefinitions="*, Auto">
 
-                            <Label Grid.Row="0" Grid.Column="0"
+                            <Label Grid.Row="0"
+                                   Grid.Column="0"
                                    Text="{Binding Name}"
                                    FontAttributes="Bold"
                                    FontSize="16" />
 
-                            <Label Grid.Row="0" Grid.Column="1"
+                            <Label Grid.Row="0"
+                                   Grid.Column="1"
                                    Text="(Default)"
                                    FontSize="12"
                                    TextColor="{DynamicResource Primary}"
                                    IsVisible="{Binding IsDefault}"
                                    VerticalOptions="Center" />
 
-                            <Label Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                            <Label Grid.Row="1"
+                                   Grid.Column="0"
+                                   Grid.ColumnSpan="2"
                                    Text="{Binding Id}"
                                    FontSize="12"
                                    TextColor="{DynamicResource Gray600}" />
 
-                            <HorizontalStackLayout Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2" Spacing="10">
+                            <HorizontalStackLayout Grid.Row="2"
+                                                   Grid.Column="0"
+                                                   Grid.ColumnSpan="2"
+                                                   Spacing="10">
                                 <Entry x:Name="DisplayNameEntry"
                                        Placeholder="Enter display name"
                                        Text="{Binding DisplayName}"
@@ -59,15 +60,17 @@
                                        VerticalOptions="Center" />
 
                                 <Button Text="Save"
-                                        Clicked="OnSaveDisplayNameClicked"
+                                        Command="{Binding Source={x:Reference DevicesPageRef}, Path=RenameDeviceCommand}"
                                         CommandParameter="{Binding .}"
                                         VerticalOptions="Center" />
                             </HorizontalStackLayout>
 
-                            <BoxView Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
+                            <BoxView Grid.Row="3"
+                                     Grid.Column="0"
+                                     Grid.ColumnSpan="2"
+                                     Margin="0,10,0,0"
                                      HeightRequest="1"
-                                     Color="{DynamicResource Gray400}"
-                                     Margin="0,10,0,0" />
+                                     Color="{DynamicResource Gray400}" />
                         </Grid>
                     </DataTemplate>
                 </CollectionView.ItemTemplate>
