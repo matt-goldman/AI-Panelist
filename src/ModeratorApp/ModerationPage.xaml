@@ -1,0 +1,49 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage x:Class="ModeratorApp.ModerationPage"
+             xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             Title="Moderation">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="30,0" Spacing="25">
+            <Label Text="AI Panelist Moderator"
+                   Style="{DynamicResource Headline}"
+                   SemanticProperties.HeadingLevel="Level1" />
+
+            <Button x:Name="ListenBtn"
+                    Text="Listen"
+                    SemanticProperties.Hint="Sets the AI panelist state to listening"
+                    Clicked="ListenBtn_Clicked"
+                    HorizontalOptions="Fill" />
+
+            <BoxView HeightRequest="1"
+                     WidthRequest="300"
+                     Color="{DynamicResource Gray400}" />
+
+            <Label HorizontalOptions="Center"
+                   VerticalOptions="Center"
+                   HorizontalTextAlignment="Center"
+                   Text="Test states" />
+
+            <Button x:Name="ThinkingButton"
+                    Text="Thinking"
+                    SemanticProperties.Description="Sets the AI panelist state to thinking"
+                    Clicked="ThinkingButton_Clicked"
+                    HorizontalOptions="Fill" />
+
+            <Button x:Name="SpeakingButton"
+                    Text="Speaking"
+                    SemanticProperties.Description="Sets the AI panelist state to speaking"
+                    Clicked="SpeakingButton_Clicked"
+                    HorizontalOptions="Fill" />
+
+            <Button x:Name="IdleButton"
+                    Text="Idle"
+                    SemanticProperties.Description="Sets the AI panelist state to idle"
+                    Clicked="IdleButton_Clicked"
+                    HorizontalOptions="Fill" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+
+</ContentPage>
