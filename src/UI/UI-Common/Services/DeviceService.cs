@@ -10,9 +10,9 @@ public class DeviceService
 {
     private readonly HttpClient _httpClient;
 
-    public DeviceService()
+    public DeviceService(HttpClient httpClient)
     {
-        _httpClient = new HttpClient();
+        _httpClient = httpClient;
     }
 
     /// <summary>
@@ -28,10 +28,9 @@ public class DeviceService
             var devices = await _httpClient.GetFromJsonAsync<List<AudioDeviceInfo>>(url);
             return devices ?? new List<AudioDeviceInfo>();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            // Log or handle error appropriately
-            Console.WriteLine($"Error fetching devices: {ex.Message}");
+            // Return empty list on error - caller can handle appropriately
             return new List<AudioDeviceInfo>();
         }
     }
@@ -50,10 +49,8 @@ public class DeviceService
             var response = await _httpClient.PostAsJsonAsync(url, request);
             return response.IsSuccessStatusCode;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            // Log or handle error appropriately
-            Console.WriteLine($"Error renaming device: {ex.Message}");
             return false;
         }
     }
