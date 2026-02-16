@@ -49,6 +49,12 @@ TTS_MODEL = os.environ.get("TTS_MODEL", DEFAULT_MODEL)
 TTS_DEVICE = os.environ.get("TTS_DEVICE", "cuda:0")
 TTS_VOICE_PROMPT = os.environ.get("TTS_VOICE_PROMPT", "")  # Path to default .pt file
 
+# Attention implementation: "flash_attention_2", "sdpa", or "eager"
+# - flash_attention_2: Fastest, but requires flash-attn package (hard on Windows)
+# - sdpa: PyTorch native scaled dot product attention, good fallback (PyTorch 2.0+)
+# - eager: Standard attention, slowest but always works
+TTS_ATTN_IMPL = os.environ.get("TTS_ATTN_IMPL", "sdpa")
+
 # ============================================================================
 # Global state
 # ============================================================================
@@ -89,7 +95,7 @@ class TTSResponse(BaseModel):
 # Voice prompt loading
 # ============================================================================
 
-def load_voice_prompt(pt_path: str):
+def load_voice_prompt(pt_path: str, device: str = "cpu"):
     """Load a voice clone prompt from a .pt file."""
     from qwen_tts import VoiceClonePromptItem
     
@@ -98,26 +104,47 @@ def load_voice_prompt(pt_path: str):
         raise FileNotFoundError(f"Voice prompt file not found: {pt_path}")
     
     logger.info(f"Loading voice prompt from: {pt_path}")
-    data = torch.load(pt_path, map_location="cpu", weights_only=False)
+    data = torch.load(pt_path, map_location=device, weights_only=False)
     
     # Handle different .pt file formats
     if isinstance(data, VoiceClonePromptItem):
-        # Already a VoiceClonePromptItem
+        # Already a VoiceClonePromptItem - move tensors to device
+        if device != "cpu":
+            if data.ref_code is not None:
+                data.ref_code = data.ref_code.to(device)
+            if data.ref_spk_embedding is not None:
+                data.ref_spk_embedding = data.ref_spk_embedding.to(device)
         return data
     elif isinstance(data, dict):
-        # Dictionary format (from manual saving)
+        # Check for Gradio demo format: {"items": [<prompt_dict>]}
+        if "items" in data and isinstance(data["items"], list) and len(data["items"]) > 0:
+            prompt_data = data["items"][0]
+        else:
+            # Direct dictionary format
+            prompt_data = data
+        
+        # Move tensors to device
+        ref_code = prompt_data.get('ref_code')
+        ref_spk_embedding = prompt_data['ref_spk_embedding']
+        
+        if device != "cpu":
+            if ref_code is not None:
+                ref_code = ref_code.to(device)
+            if ref_spk_embedding is not None:
+                ref_spk_embedding = ref_spk_embedding.to(device)
+        
         return VoiceClonePromptItem(
-            ref_code=data.get('ref_code'),
-            ref_spk_embedding=data['ref_spk_embedding'],
-            x_vector_only_mode=data.get('x_vector_only_mode', False),
-            icl_mode=data.get('icl_mode', True),
-            ref_text=data.get('ref_text'),
+            ref_code=ref_code,
+            ref_spk_embedding=ref_spk_embedding,
+            x_vector_only_mode=prompt_data.get('x_vector_only_mode', False),
+            icl_mode=prompt_data.get('icl_mode', True),
+            ref_text=prompt_data.get('ref_text'),
         )
     else:
         raise ValueError(f"Unknown voice prompt format: {type(data)}")
 
 
-def get_voice_prompt(pt_path: Optional[str] = None):
+def get_voice_prompt(pt_path: Optional[str] = None, device: str = "cpu"):
     """Get a voice prompt, using cache for efficiency."""
     global voice_prompt_cache, default_voice_prompt
     
@@ -134,8 +161,8 @@ def get_voice_prompt(pt_path: Optional[str] = None):
     if pt_path in voice_prompt_cache:
         return voice_prompt_cache[pt_path]
     
-    # Load and cache
-    prompt = load_voice_prompt(pt_path)
+    # Load and cache (on GPU for faster inference)
+    prompt = load_voice_prompt(pt_path, device=device)
     voice_prompt_cache[pt_path] = prompt
     return prompt
 
@@ -151,6 +178,7 @@ async def lifespan(app: FastAPI):
     
     logger.info(f"Starting Qwen3-TTS server in {TTS_MODE} mode...")
     logger.info(f"Model: {TTS_MODEL}")
+    logger.info(f"Attention: {TTS_ATTN_IMPL}")
     logger.info("This may take a few minutes on first run (downloading model weights)...")
     
     from qwen_tts import Qwen3TTSModel
@@ -164,20 +192,27 @@ async def lifespan(app: FastAPI):
         device = "cpu"
         dtype = torch.float32
     
+    # Enable CUDA optimizations
+    if device.startswith("cuda"):
+        torch.backends.cudnn.benchmark = True
+        logger.info("CUDA optimizations enabled")
+    
     try:
+        # Determine attention implementation
+        attn_impl = TTS_ATTN_IMPL if TTS_ATTN_IMPL != "eager" else None
+        
         model = Qwen3TTSModel.from_pretrained(
             TTS_MODEL,
             device_map=device,
             dtype=dtype,
-            # Uncomment if you have flash-attn installed and using GPU:
-            # attn_implementation="flash_attention_2",
+            attn_implementation=attn_impl,
         )
         logger.info(f"Model loaded successfully on {device}")
         
-        # Load default voice prompt if configured
+        # Load default voice prompt if configured (load directly to GPU)
         if TTS_VOICE_PROMPT:
             try:
-                default_voice_prompt = load_voice_prompt(TTS_VOICE_PROMPT)
+                default_voice_prompt = load_voice_prompt(TTS_VOICE_PROMPT, device=device)
                 logger.info(f"Default voice prompt loaded: {TTS_VOICE_PROMPT}")
             except Exception as e:
                 logger.warning(f"Failed to load default voice prompt: {e}")
@@ -225,6 +260,7 @@ async def get_config():
         "mode": TTS_MODE,
         "model": TTS_MODEL,
         "device": TTS_DEVICE,
+        "attention": TTS_ATTN_IMPL,
         "default_voice_prompt": TTS_VOICE_PROMPT or None,
         "cached_voice_prompts": list(voice_prompt_cache.keys()),
     }
@@ -275,15 +311,17 @@ async def synthesize(request: VoiceCloneRequest):
         raise HTTPException(status_code=400, detail="Text is required")
     
     try:
-        voice_prompt = get_voice_prompt(request.voice_prompt_path)
+        voice_prompt = get_voice_prompt(request.voice_prompt_path, device=TTS_DEVICE)
         
         logger.info(f"Synthesizing: '{request.text[:50]}...' with cloned voice")
         
-        wavs, sr = model.generate_voice_clone(
-            text=request.text.strip(),
-            language=request.language,
-            voice_clone_prompt=voice_prompt,
-        )
+        # Use inference_mode for faster generation (no gradient tracking)
+        with torch.inference_mode():
+            wavs, sr = model.generate_voice_clone(
+                text=request.text.strip(),
+                language=request.language,
+                voice_clone_prompt=[voice_prompt],  # Must be a list
+            )
         
         # Write to buffer
         buffer = io.BytesIO()
@@ -334,12 +372,14 @@ async def synthesize_custom_voice(request: TTSRequest):
     try:
         logger.info(f"Synthesizing: '{request.text[:50]}...' with speaker={request.speaker}")
         
-        wavs, sr = model.generate_custom_voice(
-            text=request.text.strip(),
-            language=request.language,
-            speaker=request.speaker,
-            instruct=request.instruct if request.instruct else None,
-        )
+        # Use inference_mode for faster generation (no gradient tracking)
+        with torch.inference_mode():
+            wavs, sr = model.generate_custom_voice(
+                text=request.text.strip(),
+                language=request.language,
+                speaker=request.speaker,
+                instruct=request.instruct if request.instruct else None,
+            )
         
         # Write to buffer
         buffer = io.BytesIO()
