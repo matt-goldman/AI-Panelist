@@ -1,4 +1,5 @@
 using API.Services.Interfaces;
+using Shared;
 
 namespace API.Services.Implementations;
 

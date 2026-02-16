@@ -2,11 +2,11 @@
 
 namespace ModeratorApp;
 
-public partial class MainPage : ContentPage
+public partial class ModerationPage : ContentPage
 {
     private readonly ConversationStateService service;
 
-    public MainPage(ConversationStateService service)
+    public ModerationPage(ConversationStateService service)
 	{
 		InitializeComponent();
         this.service = service;

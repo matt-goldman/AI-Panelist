@@ -1,5 +1,6 @@
 using API.Services.Interfaces;
 using NAudio.Wave;
+using Shared;
 using Whisper.net;
 using Whisper.net.Ggml;
 
