@@ -3,14 +3,24 @@
 FastAPI server for Qwen3-TTS.
 
 Provides a simple REST API for text-to-speech synthesis.
+Supports both CustomVoice (preset speakers) and VoiceClone (custom .pt files) modes.
+
 See setup-guide.md for installation and usage instructions.
+
+Configuration via environment variables:
+    TTS_MODE: "custom_voice" (default) or "voice_clone"
+    TTS_MODEL: Model name/path (defaults based on mode)
+    TTS_DEVICE: "cuda:0" (default) or "cpu"
+    TTS_VOICE_PROMPT: Path to default .pt voice prompt file (for voice_clone mode)
 """
 
 import io
+import os
 import base64
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Dict
 
 import torch
 import soundfile as sf
@@ -22,16 +32,50 @@ from pydantic import BaseModel
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Global model reference (loaded at startup)
-model = None
+# ============================================================================
+# Configuration (via environment variables or defaults)
+# ============================================================================
 
+# Mode: "custom_voice" uses preset speakers, "voice_clone" uses .pt files
+TTS_MODE = os.environ.get("TTS_MODE", "voice_clone").lower()
+
+# Model selection based on mode
+if TTS_MODE == "voice_clone":
+    DEFAULT_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
+else:
+    DEFAULT_MODEL = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+
+TTS_MODEL = os.environ.get("TTS_MODEL", DEFAULT_MODEL)
+TTS_DEVICE = os.environ.get("TTS_DEVICE", "cuda:0")
+TTS_VOICE_PROMPT = os.environ.get("TTS_VOICE_PROMPT", "")  # Path to default .pt file
+
+# ============================================================================
+# Global state
+# ============================================================================
+
+model = None
+default_voice_prompt = None  # VoiceClonePromptItem loaded at startup
+voice_prompt_cache: Dict[str, object] = {}  # Cache for loaded .pt files
+
+
+# ============================================================================
+# Request/Response models
+# ============================================================================
 
 class TTSRequest(BaseModel):
-    """Request body for TTS synthesis."""
+    """Request body for TTS synthesis (CustomVoice mode)."""
     text: str
     language: str = "Auto"
     speaker: str = "Vivian"
     instruct: Optional[str] = None
+    output_format: str = "wav"  # "wav" or "base64"
+
+
+class VoiceCloneRequest(BaseModel):
+    """Request body for TTS synthesis with cloned voice."""
+    text: str
+    language: str = "Auto"
+    voice_prompt_path: Optional[str] = None  # Path to .pt file, uses default if not specified
     output_format: str = "wav"  # "wav" or "base64"
 
 
@@ -41,36 +85,103 @@ class TTSResponse(BaseModel):
     sample_rate: int
 
 
+# ============================================================================
+# Voice prompt loading
+# ============================================================================
+
+def load_voice_prompt(pt_path: str):
+    """Load a voice clone prompt from a .pt file."""
+    from qwen_tts import VoiceClonePromptItem
+    
+    path = Path(pt_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Voice prompt file not found: {pt_path}")
+    
+    logger.info(f"Loading voice prompt from: {pt_path}")
+    data = torch.load(pt_path, map_location="cpu", weights_only=False)
+    
+    # Handle different .pt file formats
+    if isinstance(data, VoiceClonePromptItem):
+        # Already a VoiceClonePromptItem
+        return data
+    elif isinstance(data, dict):
+        # Dictionary format (from manual saving)
+        return VoiceClonePromptItem(
+            ref_code=data.get('ref_code'),
+            ref_spk_embedding=data['ref_spk_embedding'],
+            x_vector_only_mode=data.get('x_vector_only_mode', False),
+            icl_mode=data.get('icl_mode', True),
+            ref_text=data.get('ref_text'),
+        )
+    else:
+        raise ValueError(f"Unknown voice prompt format: {type(data)}")
+
+
+def get_voice_prompt(pt_path: Optional[str] = None):
+    """Get a voice prompt, using cache for efficiency."""
+    global voice_prompt_cache, default_voice_prompt
+    
+    if pt_path is None:
+        if default_voice_prompt is None:
+            raise HTTPException(
+                status_code=400, 
+                detail="No voice_prompt_path specified and no default voice configured. "
+                       "Set TTS_VOICE_PROMPT environment variable or provide voice_prompt_path in request."
+            )
+        return default_voice_prompt
+    
+    # Check cache
+    if pt_path in voice_prompt_cache:
+        return voice_prompt_cache[pt_path]
+    
+    # Load and cache
+    prompt = load_voice_prompt(pt_path)
+    voice_prompt_cache[pt_path] = prompt
+    return prompt
+
+
+# ============================================================================
+# Startup/shutdown
+# ============================================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Load model at startup, cleanup at shutdown."""
-    global model
+    global model, default_voice_prompt
     
-    logger.info("Loading Qwen3-TTS model...")
+    logger.info(f"Starting Qwen3-TTS server in {TTS_MODE} mode...")
+    logger.info(f"Model: {TTS_MODEL}")
     logger.info("This may take a few minutes on first run (downloading model weights)...")
     
     from qwen_tts import Qwen3TTSModel
     
-    # Configuration - adjust these based on your hardware
-    MODEL_NAME = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
-    DEVICE = "cuda:0"  # Use "cpu" if no NVIDIA GPU
-    DTYPE = torch.bfloat16  # Use torch.float32 for CPU or older GPUs
+    device = TTS_DEVICE
+    dtype = torch.bfloat16
     
     # Check CUDA availability
-    if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+    if device.startswith("cuda") and not torch.cuda.is_available():
         logger.warning("CUDA not available, falling back to CPU (this will be slower)")
-        DEVICE = "cpu"
-        DTYPE = torch.float32
+        device = "cpu"
+        dtype = torch.float32
     
     try:
         model = Qwen3TTSModel.from_pretrained(
-            MODEL_NAME,
-            device_map=DEVICE,
-            dtype=DTYPE,
+            TTS_MODEL,
+            device_map=device,
+            dtype=dtype,
             # Uncomment if you have flash-attn installed and using GPU:
             # attn_implementation="flash_attention_2",
         )
-        logger.info(f"Model loaded successfully on {DEVICE}")
+        logger.info(f"Model loaded successfully on {device}")
+        
+        # Load default voice prompt if configured
+        if TTS_VOICE_PROMPT:
+            try:
+                default_voice_prompt = load_voice_prompt(TTS_VOICE_PROMPT)
+                logger.info(f"Default voice prompt loaded: {TTS_VOICE_PROMPT}")
+            except Exception as e:
+                logger.warning(f"Failed to load default voice prompt: {e}")
+        
     except Exception as e:
         logger.error(f"Failed to load model: {e}")
         raise
@@ -80,12 +191,18 @@ async def lifespan(app: FastAPI):
     # Cleanup
     logger.info("Shutting down...")
     model = None
+    default_voice_prompt = None
+    voice_prompt_cache.clear()
 
+
+# ============================================================================
+# FastAPI app
+# ============================================================================
 
 app = FastAPI(
     title="Qwen3-TTS API",
-    description="Local TTS API using Qwen3-TTS",
-    version="1.0.0",
+    description="Local TTS API using Qwen3-TTS. Supports CustomVoice and VoiceClone modes.",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
@@ -93,14 +210,34 @@ app = FastAPI(
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok", "model_loaded": model is not None}
+    return {
+        "status": "ok",
+        "mode": TTS_MODE,
+        "model_loaded": model is not None,
+        "default_voice_loaded": default_voice_prompt is not None,
+    }
+
+
+@app.get("/config")
+async def get_config():
+    """Get current server configuration."""
+    return {
+        "mode": TTS_MODE,
+        "model": TTS_MODEL,
+        "device": TTS_DEVICE,
+        "default_voice_prompt": TTS_VOICE_PROMPT or None,
+        "cached_voice_prompts": list(voice_prompt_cache.keys()),
+    }
 
 
 @app.get("/speakers")
 async def list_speakers():
-    """List available speakers for CustomVoice model."""
+    """List available speakers (CustomVoice mode only)."""
     if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
+    
+    if TTS_MODE != "custom_voice":
+        return {"speakers": [], "note": "Speakers only available in custom_voice mode. Using voice_clone mode."}
     
     speakers = model.model.get_supported_speakers()
     return {"speakers": speakers}
@@ -117,14 +254,79 @@ async def list_languages():
 
 
 @app.post("/tts", response_class=Response)
-async def synthesize(request: TTSRequest):
+async def synthesize(request: VoiceCloneRequest):
     """
-    Synthesize speech from text.
+    Synthesize speech from text using cloned voice (voice_clone mode).
+    
+    If no voice_prompt_path is specified, uses the default voice configured via TTS_VOICE_PROMPT.
     
     Returns WAV audio bytes by default, or base64-encoded audio if output_format="base64".
     """
     if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
+    
+    if TTS_MODE != "voice_clone":
+        raise HTTPException(
+            status_code=400, 
+            detail="Server is in custom_voice mode. Use /tts/custom endpoint or restart with TTS_MODE=voice_clone"
+        )
+    
+    if not request.text or not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text is required")
+    
+    try:
+        voice_prompt = get_voice_prompt(request.voice_prompt_path)
+        
+        logger.info(f"Synthesizing: '{request.text[:50]}...' with cloned voice")
+        
+        wavs, sr = model.generate_voice_clone(
+            text=request.text.strip(),
+            language=request.language,
+            voice_clone_prompt=voice_prompt,
+        )
+        
+        # Write to buffer
+        buffer = io.BytesIO()
+        sf.write(buffer, wavs[0], sr, format="WAV")
+        buffer.seek(0)
+        audio_bytes = buffer.read()
+        
+        logger.info(f"Synthesis complete: {len(audio_bytes)} bytes")
+        
+        if request.output_format == "base64":
+            return TTSResponse(
+                audio=base64.b64encode(audio_bytes).decode(),
+                sample_rate=sr,
+            )
+        else:
+            return Response(
+                content=audio_bytes,
+                media_type="audio/wav",
+                headers={"X-Sample-Rate": str(sr)},
+            )
+            
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Synthesis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tts/custom", response_class=Response)
+async def synthesize_custom_voice(request: TTSRequest):
+    """
+    Synthesize speech from text using preset speakers (custom_voice mode).
+    
+    Returns WAV audio bytes by default, or base64-encoded audio if output_format="base64".
+    """
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+    
+    if TTS_MODE != "custom_voice":
+        raise HTTPException(
+            status_code=400, 
+            detail="Server is in voice_clone mode. Use /tts endpoint or restart with TTS_MODE=custom_voice"
+        )
     
     if not request.text or not request.text.strip():
         raise HTTPException(status_code=400, detail="Text is required")
