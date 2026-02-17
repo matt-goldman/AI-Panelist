@@ -34,18 +34,22 @@ public partial class MainPage : ContentPage
 
         service.PanelistState.Subscribe(state =>
         {
-            switch (state)
+            // SignalR callbacks run on a background thread - marshal to UI thread
+            MainThread.BeginInvokeOnMainThread(() =>
             {
-                case AiPanelistState.Thinking:
-                    SetIsThinking();
-                    break;
-                case AiPanelistState.Speaking:
-                    SetIsSpeaking();
-                    break;
-                default:
-                    SetIsIdle();
-                    break;
-            }
+                switch (state)
+                {
+                    case AiPanelistState.Thinking:
+                        SetIsThinking();
+                        break;
+                    case AiPanelistState.Speaking:
+                        SetIsSpeaking();
+                        break;
+                    default:
+                        SetIsIdle();
+                        break;
+                }
+            });
         });
     }
 

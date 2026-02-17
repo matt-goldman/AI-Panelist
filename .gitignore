@@ -334,6 +334,12 @@ _Pvt_Extensions
 paket-files/
 
 # FAKE - F# Make
+
+# Filler phrase audio files (keep folder structure, ignore actual audio files)
+src/API/wwwroot/audio/filler-phrases/*.wav
+src/API/wwwroot/audio/filler-phrases/*.mp3
+src/API/wwwroot/audio/filler-phrases/*.ogg
+!src/API/wwwroot/audio/filler-phrases/.gitkeep
 **/.fake/
 
 # CodeRush personal settings

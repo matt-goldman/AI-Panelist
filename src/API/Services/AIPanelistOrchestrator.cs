@@ -23,9 +23,12 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
     private Timer? _summaryTimer;
     private string _currentSummary = string.Empty;
+    private readonly Lock _summaryLock = new();
     private AiPanelistState _currentState = AiPanelistState.Idle;
     private bool _isDisabled = false;
+    private bool _isResponseInProgress = false;
     private CancellationTokenSource? _responseCts;
+    private CancellationTokenSource? _fillerCts;
     private readonly SemaphoreSlim _stateLock = new(1, 1);
     private readonly Random _random = new();
 
@@ -126,12 +129,22 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     {
         _logger.LogInformation("Cancelling AI response");
 
-        _responseCts?.Cancel();
-        await _ttsService.StopAsync();
-        await _audioPlayback.StopAsync();
+        await _stateLock.WaitAsync();
+        try
+        {
+            _responseCts?.Cancel();
+            _fillerCts?.Cancel();
+            await _ttsService.StopAsync();
+            await _audioPlayback.StopAsync();
 
-        await SetStateAsync(AiPanelistState.Idle);
-        await BroadcastConversationStateAsync();
+            _isResponseInProgress = false;
+            await SetStateAsync(AiPanelistState.Idle);
+            await BroadcastConversationStateAsync();
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
     }
 
     /// <summary>
@@ -196,6 +209,13 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     {
         try
         {
+            // Skip summary generation if response is in progress
+            if (_isResponseInProgress)
+            {
+                _logger.LogDebug("Skipping summary generation - response in progress");
+                return;
+            }
+
             var transcript = _transcriptBuffer.GetFullTranscript();
             if (string.IsNullOrWhiteSpace(transcript))
             {
@@ -204,8 +224,14 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             }
 
             _logger.LogInformation("Generating periodic summary");
-            _currentSummary = await _llmService.GenerateSummaryAsync(transcript);
-            _logger.LogDebug("Summary generated: {Summary}", _currentSummary);
+            var summary = await _llmService.GenerateSummaryAsync(transcript);
+
+            lock (_summaryLock)
+            {
+                _currentSummary = summary;
+            }
+
+            _logger.LogDebug("Summary generated: {Summary}", summary);
 
             await BroadcastConversationStateAsync();
         }
@@ -217,43 +243,56 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
     private async Task GenerateAndSpeakResponseAsync(CancellationToken cancellationToken)
     {
+        _isResponseInProgress = true;
         try
         {
-            // Play filler phrase if enabled
+            // Pause STT during response generation
+            await _sttService.PauseTranscriptionAsync();
+
+            // Play filler phrase if enabled (with separate cancellation so we can interrupt it)
+            _fillerCts?.Cancel();
+            _fillerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var fillerToken = _fillerCts.Token;
+
             if (_options.EnableFillerPhrases && _options.FillerPhraseFiles.Any())
             {
                 var fillerFile = _options.FillerPhraseFiles[_random.Next(_options.FillerPhraseFiles.Count)];
                 _logger.LogInformation("Playing filler phrase: {File}", fillerFile);
-                
-                // Play filler phrase concurrently with thinking
+
+                // Play filler phrase concurrently with thinking (will be interrupted when TTS starts)
                 _ = Task.Run(async () =>
                 {
                     try
                     {
                         if (File.Exists(fillerFile))
                         {
-                            await _audioPlayback.PlayAsync(fillerFile, cancellationToken);
+                            await _audioPlayback.PlayAsync(fillerFile, fillerToken);
                         }
                         else
                         {
                             _logger.LogWarning("Filler file not found: {File}", fillerFile);
                         }
                     }
+                    catch (OperationCanceledException)
+                    {
+                        _logger.LogDebug("Filler phrase interrupted for TTS playback");
+                    }
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Error playing filler phrase");
                     }
-                }, cancellationToken);
+                }, fillerToken);
             }
 
             // Set to Thinking state
             await SetStateAsync(AiPanelistState.Thinking);
 
-            // Pause STT during response generation
-            await _sttService.PauseTranscriptionAsync();
-
-            // Get current context
-            var summary = _currentSummary;
+            // Get current context with synchronized access
+            string summary;
+            lock (_summaryLock)
+            {
+                summary = _currentSummary;
+            }
             var recentTranscript = _transcriptBuffer.GetRecentTranscript(TimeSpan.FromSeconds(60));
 
             _logger.LogInformation("Generating response...");
@@ -261,6 +300,10 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             _logger.LogInformation("Response generated: {Response}", response);
 
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Stop filler phrase before TTS playback starts
+            _fillerCts?.Cancel();
+            await _audioPlayback.StopAsync();
 
             // Speak the response - state changes to Speaking when audio playback actually starts
             _logger.LogInformation("Starting TTS synthesis...");
@@ -290,6 +333,10 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             await SetStateAsync(AiPanelistState.Listening);
             await _sttService.ResumeTranscriptionAsync();
         }
+        finally
+        {
+            _isResponseInProgress = false;
+        }
     }
 
     private async Task SetStateAsync(AiPanelistState newState)
@@ -304,9 +351,15 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
     private async Task BroadcastConversationStateAsync()
     {
+        string summary;
+        lock (_summaryLock)
+        {
+            summary = _currentSummary;
+        }
+
         var state = new ConversationState(
             RollingTranscript: _transcriptBuffer.GetFullTranscript(),
-            CurrentSummary: _currentSummary,
+            CurrentSummary: summary,
             IsSpeaking: _currentState == AiPanelistState.Speaking,
             IsDisabled: _isDisabled
         );
@@ -318,6 +371,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     {
         _summaryTimer?.Dispose();
         _responseCts?.Dispose();
+        _fillerCts?.Dispose();
         _stateLock?.Dispose();
     }
 }

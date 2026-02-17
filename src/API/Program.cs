@@ -143,6 +143,24 @@ switch (options.AudioPlaybackServiceType?.ToLower())
 builder.Services.AddSingleton<AIPanelistOrchestrator>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AIPanelistOrchestrator>());
 
+// Enumerate filler phrase files from wwwroot/audio/filler-phrases
+builder.Services.PostConfigure<AIPanelistOptions>(opts =>
+{
+    var env = builder.Environment;
+    var fillerPhrasesPath = Path.Combine(env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot"), "audio", "filler-phrases");
+
+    if (Directory.Exists(fillerPhrasesPath))
+    {
+        var audioExtensions = new[] { ".wav", ".mp3", ".ogg" };
+        var files = Directory.GetFiles(fillerPhrasesPath)
+            .Where(f => audioExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            .OrderBy(f => f)
+            .ToList();
+
+        opts.FillerPhraseFiles = files;
+    }
+});
+
 var app = builder.Build();
 
 app.MapDefaultEndpoints();
@@ -155,6 +173,14 @@ logger.LogInformation("  LLM: {Service}", options.LlmServiceType ?? "Mock");
 logger.LogInformation("  TTS: {Service}", options.TtsServiceType ?? "Mock");
 logger.LogInformation("  Audio Device: {Service}", options.AudioDeviceServiceType ?? "Mock");
 logger.LogInformation("  Audio Playback: {Service}", options.AudioPlaybackServiceType ?? "Mock");
+
+// Log filler phrases
+var fillerOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AIPanelistOptions>>().Value;
+logger.LogInformation("  Filler Phrases: {Count} files found", fillerOptions.FillerPhraseFiles.Count);
+foreach (var file in fillerOptions.FillerPhraseFiles)
+{
+    logger.LogDebug("    - {File}", Path.GetFileName(file));
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

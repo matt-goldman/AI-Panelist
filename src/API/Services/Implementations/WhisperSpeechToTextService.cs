@@ -19,7 +19,7 @@ public class WhisperSpeechToTextService(
     private readonly List<DeviceCapture> _deviceCaptures = [];
     private WhisperFactory? _whisperFactory;
     private CancellationTokenSource? _cts;
-    private bool _isPaused;
+    private volatile bool _isPaused;
 
     public event EventHandler<TranscriptionReceivedEventArgs>? TranscriptionReceived;
 

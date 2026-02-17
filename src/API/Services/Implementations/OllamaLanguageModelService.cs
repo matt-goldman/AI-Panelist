@@ -31,7 +31,7 @@ public class OllamaLanguageModelService : ILanguageModelService
     {
         Temperature = 0.7f, // More creative and varied for responses
         TopP        = 0.9f,
-        NumPredict  = 300
+        NumPredict  = 500   // ~385 words max, gives headroom for 150 word target
     };
 
     public OllamaLanguageModelService(
