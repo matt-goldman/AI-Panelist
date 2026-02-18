@@ -19,6 +19,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private readonly ITextToSpeechService _ttsService;
     private readonly IAudioPlaybackService _audioPlayback;
     private readonly TranscriptBufferService _transcriptBuffer;
+    private readonly ResponseCaptureService _captureService;
     private readonly AIPanelistOptions _options;
 
     private Timer? _summaryTimer;
@@ -40,6 +41,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         ITextToSpeechService ttsService,
         IAudioPlaybackService audioPlayback,
         TranscriptBufferService transcriptBuffer,
+        ResponseCaptureService captureService,
         IOptions<AIPanelistOptions> options)
     {
         _logger = logger;
@@ -49,6 +51,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _ttsService = ttsService;
         _audioPlayback = audioPlayback;
         _transcriptBuffer = transcriptBuffer;
+        _captureService = captureService;
         _options = options.Value;
 
         // Subscribe to transcription events
@@ -298,6 +301,9 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             _logger.LogInformation("Generating response...");
             var response = await _llmService.GenerateResponseAsync(summary, recentTranscript, cancellationToken);
             _logger.LogInformation("Response generated: {Response}", response);
+
+            // Capture the response asynchronously (non-blocking)
+            _captureService.CaptureTextResponse(response, summary);
 
             cancellationToken.ThrowIfCancellationRequested();
 

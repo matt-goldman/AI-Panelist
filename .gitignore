@@ -422,3 +422,5 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+# Captured response files (LLM text and TTS audio for post-production)
+**/captured-responses/

@@ -24,6 +24,10 @@ builder.Services.Configure<AIPanelistOptions>(
 builder.Services.Configure<PromptConfiguration>(
     builder.Configuration.GetSection(PromptConfiguration.SectionName));
 
+// Configure response capture options
+builder.Services.Configure<ResponseCaptureOptions>(
+    builder.Configuration.GetSection(ResponseCaptureOptions.SectionName));
+
 // Register prompt service
 builder.Services.AddSingleton<PromptService>();
 
@@ -143,6 +147,10 @@ switch (options.AudioPlaybackServiceType?.ToLower())
 builder.Services.AddSingleton<AIPanelistOrchestrator>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<AIPanelistOrchestrator>());
 
+// Register response capture service (for capturing LLM responses and TTS audio)
+builder.Services.AddSingleton<ResponseCaptureService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ResponseCaptureService>());
+
 // Enumerate filler phrase files from wwwroot/audio/filler-phrases
 builder.Services.PostConfigure<AIPanelistOptions>(opts =>
 {
@@ -173,6 +181,15 @@ logger.LogInformation("  LLM: {Service}", options.LlmServiceType ?? "Mock");
 logger.LogInformation("  TTS: {Service}", options.TtsServiceType ?? "Mock");
 logger.LogInformation("  Audio Device: {Service}", options.AudioDeviceServiceType ?? "Mock");
 logger.LogInformation("  Audio Playback: {Service}", options.AudioPlaybackServiceType ?? "Mock");
+
+// Log response capture configuration
+var captureOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ResponseCaptureOptions>>().Value;
+logger.LogInformation("  Response Capture: {Status}", captureOptions.Enabled ? "Enabled" : "Disabled");
+if (captureOptions.Enabled)
+{
+    logger.LogInformation("    Text: {Status} -> {Dir}", captureOptions.CaptureTextResponses ? "Yes" : "No", captureOptions.TextOutputDirectory);
+    logger.LogInformation("    Audio: {Status} -> {Dir}", captureOptions.CaptureAudioResponses ? "Yes" : "No", captureOptions.AudioOutputDirectory);
+}
 
 // Log filler phrases
 var fillerOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<AIPanelistOptions>>().Value;

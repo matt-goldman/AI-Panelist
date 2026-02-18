@@ -10,6 +10,7 @@ public class QwenTextToSpeechService : ITextToSpeechService
 {
     private readonly HttpClient _client;
     private readonly ILogger<QwenTextToSpeechService> _logger;
+    private readonly ResponseCaptureService _captureService;
     private CancellationTokenSource? _cts;
     private WaveOutEvent? _waveOut;
     private readonly object _lock = new();
@@ -18,10 +19,12 @@ public class QwenTextToSpeechService : ITextToSpeechService
 
     public QwenTextToSpeechService(
         HttpClient client,
-        ILogger<QwenTextToSpeechService> logger)
+        ILogger<QwenTextToSpeechService> logger,
+        ResponseCaptureService captureService)
     {
         _client = client;
         _logger = logger;
+        _captureService = captureService;
         _logger.LogInformation("Qwen TTS initialized");
         _logger.LogInformation("Base address for HTTP client: {BaseAddress}", _client.BaseAddress);
         if (_client.BaseAddress is null)
@@ -42,6 +45,9 @@ public class QwenTextToSpeechService : ITextToSpeechService
             _logger.LogInformation("Qwen TTS: Calling synthesis API...");
             var audioBytes = await SynthesizeAsync(text, _cts.Token);
             _logger.LogInformation("Qwen TTS: Synthesis complete, received {Bytes} bytes", audioBytes.Length);
+
+            // Capture audio bytes asynchronously (non-blocking, zero latency impact)
+            _captureService.CaptureAudioResponse(audioBytes, text);
 
             if (_cts.Token.IsCancellationRequested)
             {
