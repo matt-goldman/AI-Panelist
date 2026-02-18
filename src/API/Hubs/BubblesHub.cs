@@ -10,7 +10,7 @@ public class BubblesHub(AIPanelistOrchestrator orchestrator, ILogger<BubblesHub>
 
     public async Task UpdateConversationState(ConversationState state)
     {
-        await Clients.All.SendAsync("UpdateConversationState", state);
+        await Clients.All.SendAsync(Messages.UpdateConversationState, state);
     }
 
     public async Task UpdatePanelState(AiPanelistState state)
@@ -25,6 +25,24 @@ public class BubblesHub(AIPanelistOrchestrator orchestrator, ILogger<BubblesHub>
         }
         
         // Broadcast the state change (orchestrator will also update states during processing)
-        await Clients.All.SendAsync("UpdatePanelState", state);
+        await Clients.All.SendAsync(Messages.UpdatePanelState, state);
+    }
+
+    public async Task TestCustomState(string stateName)
+    {
+        _logger.LogInformation("SetCustomState called with stateName: {StateName}", stateName);
+        await Clients.All.SendAsync(Messages.TestCustomState, stateName);
+    }
+
+    public async Task SetThinkingStateAnimation(string stateName)
+    {
+        _logger.LogInformation("SetThinkingStateAnimation called with stateName: {StateName}", stateName);
+        await Clients.All.SendAsync(Messages.SetThinkingStateAnimation, stateName);
+    }
+
+    public async Task SetSpeakingStateAnimation(string stateName)
+    {
+        _logger.LogInformation("SetSpeakingStateAnimation called with stateName: {StateName}", stateName);
+        await Clients.All.SendAsync(Messages.SetSpeakingStateAnimation, stateName);
     }
 }

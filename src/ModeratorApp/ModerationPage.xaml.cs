@@ -36,5 +36,16 @@ public partial class ModerationPage : ContentPage
     private void IdleButton_Clicked(object sender, EventArgs e)
     {
         service.SetPanelistState(Shared.AiPanelistState.Idle);
-    }   
+    }
+
+    private async void CustomStateButton_Clicked(object sender, EventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(CustomStateEntry.Text))
+        {
+            await DisplayAlertAsync("Error", "Please enter a custom state name.", "OK");
+            return;
+        }
+
+        await service.TestCustomState(CustomStateEntry.Text);
+    }
 }

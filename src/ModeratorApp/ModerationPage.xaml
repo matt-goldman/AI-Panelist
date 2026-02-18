@@ -43,6 +43,16 @@
                     Clicked="IdleButton_Clicked"
                     HorizontalOptions="Fill" />
 
+            <Entry x:Name="CustomStateEntry"
+                   Placeholder="Enter custom state"
+                   HorizontalOptions="Fill" />
+
+            <Button x:Name="CustomStateButton"
+                    Text="Set Custom State"
+                    SemanticProperties.Description="Sets the AI panelist state to a custom value entered in the text box above"
+                    Clicked="CustomStateButton_Clicked"
+                    HorizontalOptions="Fill" />
+
         </VerticalStackLayout>
     </ScrollView>
 

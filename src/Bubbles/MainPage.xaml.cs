@@ -8,8 +8,8 @@ public partial class MainPage : ContentPage
 {
     private SKConfettiSystem _regularBubbleConfettiSystem;
 
-    private const string ThinkingAnimation = "ai-loading.json";
-    private const string SpeakingAnimation = "wave.json";
+    private string ThinkingAnimation = "Bubbles.json"; // "ai-loading.json";
+    private string SpeakingAnimation = "bizz.json"; //"wave.json";
     private readonly ConversationStateService service;
 
     public MainPage(ConversationStateService service)
@@ -51,6 +51,36 @@ public partial class MainPage : ContentPage
                 }
             });
         });
+
+        service.CustomState.Subscribe(stateName =>
+        {
+            if (string.IsNullOrWhiteSpace(stateName))
+            {
+                return;
+            }
+
+            MainThread.BeginInvokeOnMainThread(() => SetCustomState(stateName));
+        });
+
+        service.ThinkingStateAnimation.Subscribe(stateName =>
+        {
+            if (string.IsNullOrWhiteSpace(stateName))
+            {
+                return;
+            }
+
+            ThinkingAnimation = stateName.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ? stateName : $"{stateName}.json";
+        });
+
+        service.SpeakingStateAnimation.Subscribe(stateName =>
+        {
+            if (string.IsNullOrWhiteSpace(stateName))
+            {
+                return;
+            }
+
+            SpeakingAnimation = stateName.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ? stateName : $"{stateName}.json";
+        });
     }
 
     protected override async void OnAppearing()
@@ -67,6 +97,16 @@ public partial class MainPage : ContentPage
     private void SetIsSpeaking()
     {
         BubblesState.Source = new SKFileLottieImageSource { File = SpeakingAnimation };
+    }
+
+    private void SetCustomState(string stateName)
+    {
+        if (!stateName.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            stateName += ".json";
+        }
+
+        BubblesState.Source = new SKFileLottieImageSource { File = stateName };
     }
 
     private void SetIsIdle()
