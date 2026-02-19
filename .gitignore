@@ -340,6 +340,12 @@ src/API/wwwroot/audio/filler-phrases/*.wav
 src/API/wwwroot/audio/filler-phrases/*.mp3
 src/API/wwwroot/audio/filler-phrases/*.ogg
 !src/API/wwwroot/audio/filler-phrases/.gitkeep
+
+# Intro audio (generated with cloned voice)
+src/API/wwwroot/audio/Intro.wav
+
+# Voice clone prompt files (PyTorch tensors containing voice samples)
+*.pt
 **/.fake/
 
 # CodeRush personal settings
