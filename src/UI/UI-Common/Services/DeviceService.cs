@@ -15,8 +15,8 @@ public class DeviceService(HttpClient httpClient)
     public async Task<List<AudioDeviceInfo>> GetDevicesAsync()
     {
         var apiAddress = await ApiConfigService.GetApiAddress();
-        var url = $"{apiAddress.TrimEnd('/')}/api/devices";
-        
+        var url = $"https://{apiAddress.TrimEnd('/')}/api/devices";
+
         try
         {
             var devices = await httpClient.GetFromJsonAsync<List<AudioDeviceInfo>>(url);
@@ -35,8 +35,8 @@ public class DeviceService(HttpClient httpClient)
     public async Task<bool> RenameDeviceAsync(string deviceId, string displayName)
     {
         var apiAddress = await ApiConfigService.GetApiAddress();
-        var url = $"{apiAddress.TrimEnd('/')}/api/devices/{deviceId}/rename";
-        
+        var url = $"https://{apiAddress.TrimEnd('/')}/api/devices/{deviceId}/rename";
+
         try
         {
             var request = new { DisplayName = displayName };

@@ -53,7 +53,6 @@ public partial class DevicesPage : ContentPage
         {
             await DisplayAlertAsync("Not Renamed", "No new device name provided", "OK");
             return;
-
         }
 
         var success = await _deviceService.RenameDeviceAsync(device.Id, device.DisplayName);
