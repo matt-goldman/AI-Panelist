@@ -1,3 +1,5 @@
+using k8s.Models;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 // NOTE: Stopped using this because of too many problems. Clent integration doesn't work,
@@ -21,9 +23,13 @@ var tts = builder.AddExecutable("qwen-tts", "wsl", ".",
     "source ~/qwentts/qwen-tts-venv/bin/activate && cd ~/qwentts && python optimized_server.py")
     .WithHttpEndpoint(port: 8000, name: "http", isProxied: false);
 
-builder.AddProject<Projects.API>("api")
+var api = builder.AddProject<Projects.API>("api")
     .WithReference(responses)
         .WaitFor(responses)
     .WaitFor(tts);
+
+builder.AddDevTunnel("devtunnel-public")
+    .WithAnonymousAccess()
+    .WithReference(api.GetEndpoint("https"));
 
 builder.Build().Run();

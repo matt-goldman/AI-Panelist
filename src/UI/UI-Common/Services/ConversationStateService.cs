@@ -49,7 +49,7 @@ public class ConversationStateService()
 
     private async Task<bool> TryConnectHub(string hubAddress)
     {
-        var hubUrl = $"{hubAddress.TrimEnd("/")}/bubbles";
+        var hubUrl = new Uri($"https://{hubAddress.TrimEnd("/")}/bubbles", UriKind.Absolute);
 
         _hubConnection = new HubConnectionBuilder()
             .WithUrl(hubUrl)

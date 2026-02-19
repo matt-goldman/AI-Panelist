@@ -59,6 +59,8 @@ public partial class MainPage : ContentPage
                 return;
             }
 
+            //throw new Exception($"Received custom state: {stateName}. Custom states are not currently supported in the Bubbles app.");
+
             MainThread.BeginInvokeOnMainThread(() => SetCustomState(stateName));
         });
 

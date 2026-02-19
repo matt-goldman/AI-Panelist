@@ -3,7 +3,8 @@ using Android.Runtime;
 
 namespace Bubbles;
 
-[Application]
+// Designed to work offline in local network environments, so we need to allow cleartext traffic for the API calls to work
+[Application(UsesCleartextTraffic = true)]
 public class MainApplication : MauiApplication
 {
 	public MainApplication(IntPtr handle, JniHandleOwnership ownership)

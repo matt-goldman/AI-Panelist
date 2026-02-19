@@ -32,18 +32,18 @@ public partial class IPAddressPopup : Popup<string>
         }
 
         // check to see if it's localhost
-        if (!ipAddress.Contains("localhost", StringComparison.OrdinalIgnoreCase))
-        {
-            // validate octets are between 0 and 255
-            var octets = ipAddress.Split('.');
-            if (octets.Length != 4 || octets.Any(o => !int.TryParse(o, out int octetValue) || octetValue < 0 || octetValue > 255))
-            {
-                // Handle invalid IP address case
-                ErrorLabel.Text = "Invalid IP address format. Each octet must be between 0 and 255.";
-                ErrorLabel.IsVisible = true;
-                return;
-            }
-        }
+        //if (!ipAddress.Contains("localhost", StringComparison.OrdinalIgnoreCase))
+        //{
+        //    // validate octets are between 0 and 255
+        //    var octets = ipAddress.Split('.');
+        //    if (octets.Length != 4 || octets.Any(o => !int.TryParse(o, out int octetValue) || octetValue < 0 || octetValue > 255))
+        //    {
+        //        // Handle invalid IP address case
+        //        ErrorLabel.Text = "Invalid IP address format. Each octet must be between 0 and 255.";
+        //        ErrorLabel.IsVisible = true;
+        //        return;
+        //    }
+        //}
 
         // Handle valid IP address case
         await CloseAsync(ipAddress);

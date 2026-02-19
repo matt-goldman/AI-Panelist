@@ -7,7 +7,7 @@
            Padding="10"
            x:TypeArguments="system:String"
            BackgroundColor="Gray">
-    <VerticalStackLayout Spacing="6">
+    <VerticalStackLayout Padding="20" Spacing="6">
         <Label Text="Host IP Address Required"
                FontSize="Title"
                FontAttributes="Bold"
