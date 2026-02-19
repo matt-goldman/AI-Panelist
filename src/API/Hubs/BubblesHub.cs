@@ -45,4 +45,11 @@ public class BubblesHub(AIPanelistOrchestrator orchestrator, ILogger<BubblesHub>
         _logger.LogInformation("SetSpeakingStateAnimation called with stateName: {StateName}", stateName);
         await Clients.All.SendAsync(Messages.SetSpeakingStateAnimation, stateName);
     }
+
+    public async Task IntroduceSelf()
+    {
+        _logger.LogInformation("IntroduceSelf called");
+        await Clients.All.SendAsync(Messages.IntroduceSelf);
+        await orchestrator.IntroduceSelf();
+    }
 }

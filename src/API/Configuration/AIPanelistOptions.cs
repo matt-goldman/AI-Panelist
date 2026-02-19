@@ -32,7 +32,12 @@ public class AIPanelistOptions
     /// <summary>
     /// Filler phrase audio file paths
     /// </summary>
-    public List<string> FillerPhraseFiles { get; set; } = new();
+    public List<string> FillerPhraseFiles { get; set; } = [];
+
+    /// <summary>
+    /// Introductory phrase for the AI panelist
+    /// </summary>
+    public string IntroPhrase { get; set; } = string.Empty;
 
     /// <summary>
     /// STT service implementation type (Mock, Whisper)

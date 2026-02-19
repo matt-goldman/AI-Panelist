@@ -48,4 +48,9 @@ public partial class ModerationPage : ContentPage
 
         await service.TestCustomState(CustomStateEntry.Text);
     }
+
+    private async void IntroduceButton_Clicked(object sender, EventArgs e)
+    {
+        await service.IntroduceSelf();
+    }
 }

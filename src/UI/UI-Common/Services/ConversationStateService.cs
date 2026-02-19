@@ -47,6 +47,9 @@ public class ConversationStateService()
     public Task SetSpeakingStateAnimation(string stateName)
         => _hubConnection?.SendAsync(Shared.Messages.SetSpeakingStateAnimation, stateName) ?? Task.CompletedTask;
 
+    public Task IntroduceSelf()
+        => _hubConnection?.SendAsync(Shared.Messages.IntroduceSelf) ?? Task.CompletedTask;
+
     private async Task<bool> TryConnectHub(string hubAddress)
     {
         var hubUrl = new Uri($"https://{hubAddress.TrimEnd("/")}/bubbles", UriKind.Absolute);

@@ -16,6 +16,12 @@
                     Clicked="ListenBtn_Clicked"
                     HorizontalOptions="Fill" />
 
+            <Button x:Name="IntroduceButton"
+                    Text="Introduce Self"
+                    SemanticProperties.Description="Introduces the AI panelist"
+                    Clicked="IntroduceButton_Clicked"
+                    HorizontalOptions="Fill" />
+
             <BoxView HeightRequest="1"
                      WidthRequest="300"
                      Color="{DynamicResource Gray400}" />

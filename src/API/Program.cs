@@ -167,6 +167,13 @@ builder.Services.PostConfigure<AIPanelistOptions>(opts =>
 
         opts.FillerPhraseFiles = files;
     }
+
+    var audioRootPath = Path.Combine(env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot"), "audio");
+    var introFile = Path.Combine(audioRootPath, "Intro.wav");
+    if (File.Exists(introFile))
+    {
+        opts.IntroPhrase = introFile;
+    }
 });
 
 var app = builder.Build();

@@ -126,6 +126,51 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     }
 
     /// <summary>
+    /// Plays a canned message to introduce the AI panelist (can be used when moderator first enables the panelist or for testing connectivity)
+    /// </summary>
+    /// <returns></returns>
+    public async Task IntroduceSelf()
+    {
+        _logger.LogInformation("Introducing self");
+
+        await _stateLock.WaitAsync();
+
+        try
+        {
+            if (_isDisabled)
+            {
+                _logger.LogWarning("Cannot introduce self - panelist is disabled");
+                return;
+            }
+
+            // use an audio file called Intro.wav, same as how the thinkng filler phrases are handled, but without the random selection
+            try
+            {
+                if (File.Exists(_options.IntroPhrase))
+                {
+                    await SetStateAsync(AiPanelistState.Speaking);
+                    await _audioPlayback.PlayAsync(_options.IntroPhrase, CancellationToken.None);
+                }
+                else
+                {
+                    _logger.LogWarning("Intro file not found: {IntroPhrase}", _options.IntroPhrase);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error playing intro audio");
+            }
+
+            // Return to Listening state after introduction
+            await SetStateAsync(AiPanelistState.Idle);
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+    }
+
+    /// <summary>
     /// Cancel current response and return to Idle state
     /// </summary>
     public async Task CancelResponseAsync()
