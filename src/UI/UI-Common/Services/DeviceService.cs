@@ -48,4 +48,24 @@ public class DeviceService(HttpClient httpClient)
             return false;
         }
     }
+
+    /// <summary>
+    /// Enable or disable a device for transcription
+    /// </summary>
+    public async Task<bool> SetDeviceEnabledAsync(string deviceId, bool isEnabled)
+    {
+        var apiAddress = await ApiConfigService.GetApiAddress();
+        var url = $"https://{apiAddress.TrimEnd('/')}/api/devices/{deviceId}/enabled";
+
+        try
+        {
+            var request = new { IsEnabled = isEnabled };
+            var response = await httpClient.PostAsJsonAsync(url, request);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
 }

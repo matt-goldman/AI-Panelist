@@ -9,9 +9,9 @@ namespace API.Services.Implementations;
 public class MockAudioDeviceService : IAudioDeviceService
 {
     private readonly ILogger<MockAudioDeviceService> _logger;
-    private List<AudioDeviceInfo> _selectedDevices = new();
+    private List<AudioDeviceInfo> _selectedDevices = [];
     private List<AudioDeviceInfo>? _cachedDevices;
-    private readonly Dictionary<string, string> _displayNames = new();
+    private readonly Dictionary<string, string> _displayNames = [];
 
     public MockAudioDeviceService(ILogger<MockAudioDeviceService> logger)
     {
@@ -155,5 +155,10 @@ public class MockAudioDeviceService : IAudioDeviceService
         {
             device.DisplayName = _displayNames.GetValueOrDefault(device.Id);
         }
+    }
+
+    public Task<bool> SetDeviceEnabledAsync(string deviceId, bool isEnabled)
+    {
+        throw new NotImplementedException();
     }
 }

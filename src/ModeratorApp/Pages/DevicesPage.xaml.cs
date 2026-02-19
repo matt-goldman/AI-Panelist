@@ -68,4 +68,19 @@ public partial class DevicesPage : ContentPage
             await DisplayAlertAsync("Error", "Failed to update device display name", "OK");
         }
     }
+
+    private async void OnDeviceEnabledToggled(object? sender, ToggledEventArgs e)
+    {
+        if (sender is not Switch { BindingContext: AudioDeviceInfo device })
+            return;
+
+        var success = await _deviceService.SetDeviceEnabledAsync(device.Id, e.Value);
+
+        if (!success)
+        {
+            // Revert the toggle if the API call failed
+            device.IsEnabled = !e.Value;
+            await DisplayAlertAsync("Error", "Failed to update device enabled state", "OK");
+        }
+    }
 }

@@ -35,6 +35,10 @@ public static class AudioDevicesEndpoints
             .WithName("RenameDevice")
             .WithSummary("Set a display name for an audio device (e.g., panelist name)");
 
+        group.MapPost("/{deviceId}/enabled", SetDeviceEnabledAsync)
+            .WithName("SetDeviceEnabled")
+            .WithSummary("Enable or disable a device for transcription");
+
         return app;
     }
 
@@ -123,6 +127,30 @@ public static class AudioDevicesEndpoints
 
         return Results.NotFound(new { message = "Device not found", deviceId });
     }
+
+    private static async Task<IResult> SetDeviceEnabledAsync(
+        string deviceId,
+        SetDeviceEnabledRequest request,
+        IAudioDeviceService audioDeviceService,
+        ILogger<AudioDevicesEndpointLogger> logger)
+    {
+        logger.LogInformation("SetDeviceEnabled endpoint called for deviceId: {DeviceId} with enabled: {IsEnabled}", 
+            deviceId, request.IsEnabled);
+
+        var success = await audioDeviceService.SetDeviceEnabledAsync(deviceId, request.IsEnabled);
+
+        if (success)
+        {
+            return Results.Ok(new 
+            { 
+                message = request.IsEnabled ? "Device enabled" : "Device disabled", 
+                deviceId, 
+                isEnabled = request.IsEnabled 
+            });
+        }
+
+        return Results.NotFound(new { message = "Device not found", deviceId });
+    }
 }
 
 /// <summary>
@@ -151,4 +179,15 @@ public class RenameDeviceRequest
     /// Set to null or empty to clear the custom name.
     /// </summary>
     public string? DisplayName { get; set; }
+}
+
+/// <summary>
+/// Request model for enabling/disabling an audio device
+/// </summary>
+public class SetDeviceEnabledRequest
+{
+    /// <summary>
+    /// Whether the device should be enabled for transcription.
+    /// </summary>
+    public bool IsEnabled { get; set; }
 }

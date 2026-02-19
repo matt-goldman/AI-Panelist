@@ -38,4 +38,10 @@ public interface IAudioDeviceService
     /// </summary>
     /// <returns>True if the device was found and renamed</returns>
     Task<bool> SetDeviceDisplayNameAsync(string deviceId, string displayName);
+
+    /// <summary>
+    /// Enable or disable a device for transcription. Disabled devices are ignored.
+    /// </summary>
+    /// <returns>True if the device was found and updated</returns>
+    Task<bool> SetDeviceEnabledAsync(string deviceId, bool isEnabled);
 }

@@ -13,6 +13,7 @@ public class WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger
     private List<AudioDeviceInfo> _selectedDevices = new();
     private List<AudioDeviceInfo>? _cachedDevices;
     private readonly Dictionary<string, string> _displayNames = new();
+    private readonly Dictionary<string, bool> _enabledStates = new();
 
     public Task<List<AudioDeviceInfo>> GetInputDevicesAsync()
     {
@@ -81,9 +82,11 @@ public class WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger
             GetSelectedInputDevice();
         }
 
-        // Apply current display names
+        // Apply current display names and enabled states
         ApplyDisplayNames(_selectedDevices);
-        return _selectedDevices.ToList();
+
+        // Return only enabled devices for transcription
+        return _selectedDevices.Where(d => d.IsEnabled).ToList();
     }
 
     public async Task<bool> SelectInputDeviceAsync(string deviceId)
@@ -166,11 +169,44 @@ public class WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger
         return Task.FromResult(false);
     }
 
+    public Task<bool> SetDeviceEnabledAsync(string deviceId, bool isEnabled)
+    {
+        _logger.LogInformation("Setting device {DeviceId} enabled state to {IsEnabled}", deviceId, isEnabled);
+
+        // Store the enabled state
+        _enabledStates[deviceId] = isEnabled;
+
+        // Update cached devices if present
+        if (_cachedDevices != null)
+        {
+            var device = _cachedDevices.FirstOrDefault(d => d.Id == deviceId);
+            if (device != null)
+            {
+                device.IsEnabled = isEnabled;
+                _logger.LogInformation("Updated enabled state for device '{Name}' to {IsEnabled}", 
+                    device.Name, isEnabled);
+
+                // Also update in selected devices
+                var selectedDevice = _selectedDevices.FirstOrDefault(d => d.Id == deviceId);
+                if (selectedDevice != null)
+                {
+                    selectedDevice.IsEnabled = isEnabled;
+                }
+
+                return Task.FromResult(true);
+            }
+        }
+
+        _logger.LogWarning("Device {DeviceId} not found in cache, enabled state stored for later", deviceId);
+        return Task.FromResult(false);
+    }
+
     private void ApplyDisplayNames(List<AudioDeviceInfo> devices)
     {
         foreach (var device in devices)
         {
             device.DisplayName = _displayNames.GetValueOrDefault(device.Id);
+            device.IsEnabled = _enabledStates.GetValueOrDefault(device.Id, true);
         }
     }
 }
