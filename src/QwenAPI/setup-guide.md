@@ -200,6 +200,44 @@ uvicorn local_api.server:app --host 0.0.0.0 --port 8080
 
 ---
 
+## 7b. Voice Cloning Configuration (Optional)
+
+The server supports voice cloning from a reference audio sample. This lets the TTS output sound like a specific person.
+
+### What You Need
+
+1. **Reference audio file** (`.wav`) - 10-30 seconds of clear speech from the voice you want to clone
+2. **Transcript** - An accurate text transcript of what's said in the audio
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TTS_REF_AUDIO` | Path to reference audio file | `~/qwentts/bubbles-sample.wav` |
+| `TTS_REF_TEXT` | Transcript of the reference audio | (see server.py) |
+
+### Example Setup (Linux/WSL)
+
+```bash
+# Place your reference audio
+cp my_voice_sample.wav ~/qwentts/bubbles-sample.wav
+
+# Set the transcript (must match what's said in the audio)
+export TTS_REF_TEXT="This is what I said in my voice sample recording."
+
+# Run the server
+python server.py
+```
+
+### Tips for Good Voice Cloning
+
+- Use clean audio with minimal background noise
+- 10-30 seconds is ideal - too short loses voice characteristics, too long slows processing
+- The transcript must be accurate - mismatches degrade quality
+- Include varied intonation in your sample for more natural output
+
+---
+
 ## 8. Test the API
 
 ### Using curl (PowerShell)

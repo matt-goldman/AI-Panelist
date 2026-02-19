@@ -192,6 +192,39 @@ The system will:
 
 ---
 
+## Before You Run (Setup Requirements)
+
+This project uses **Qwen3-TTS** for voice synthesis. A few things to note:
+
+### Voice Cloning (Optional)
+
+The TTS server supports voice cloning from a reference audio sample. You'll need:
+- A `.wav` file of the voice you want to clone (~10-30 seconds of clear speech)
+- A transcript of that audio
+
+Configure via environment variables `TTS_REF_AUDIO` and `TTS_REF_TEXT`, or edit the defaults in `server.py`.
+
+See [src/QwenAPI/setup-guide.md](src/QwenAPI/setup-guide.md) for detailed setup instructions.
+
+### Pre-generated Audio (Optional)
+
+For the full experience, you can pre-generate:
+- **`Intro.wav`** - Intro audio (place in `src/API/wwwroot/audio/`)
+- **Filler phrases** - Audio clips for natural pauses (place in `src/API/wwwroot/audio/filler-phrases/`)
+
+### TTS Server (Windows + CUDA)
+
+On Windows, PyTorch CUDA has issues running natively. The AppHost is configured to run the TTS server via **WSL**:
+
+1. Set up WSL with Ubuntu (e.g., `Ubuntu-22.04`)
+2. Copy `src/QwenAPI/server.py` and `requirements.txt` to your WSL environment
+3. Create a Python venv and install dependencies
+4. Update the path in `AppHost.cs` to match your WSL setup
+
+If you're on **Linux or macOS**, edit `AppHost.cs` - there's a commented-out `AddPythonApp` option you can use instead of the WSL executable.
+
+---
+
 ## Why We Built This
 
 Because we joked about inviting an AI to the panel…  
