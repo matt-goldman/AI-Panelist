@@ -1,3 +1,5 @@
+![](/assets/header.png)
+
 # AI Panelist – “Bubbles”
 
 A lightweight, local-first AI “panelist” built for a live Beer Driven Devs event.
