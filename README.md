@@ -13,7 +13,7 @@ If it works: great.
 If it doesn’t: we thank it for its service and move on.
 <figure>
 <img src="/assets/panel.jpg" width="700px" />
-<figcaption>Figure: It worked!</figcaption>
+<figcaption><em>Figure: It worked!</em></figcaption>
 </figure>
 
 ## What This Project Is
