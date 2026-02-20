@@ -196,8 +196,6 @@ Add WASAPI loopback capture support to `WindowsAudioDeviceService`. This would e
 - **[local-pipeline-guide.md](docs/local-pipeline-guide.md)** - Architecture and developer guide
 - **[example-implementations.md](docs/example-implementations.md)** - Complete implementation examples and code
 
----
-
 ## Before You Run (Setup Requirements)
 
 This project uses **Qwen3-TTS** for voice synthesis. A few things to note:
@@ -228,8 +226,6 @@ On Windows, PyTorch CUDA has issues running natively. The AppHost is configured 
 4. Update the path in `AppHost.cs` to match your WSL setup
 
 If you're on **Linux or macOS**, edit `AppHost.cs` - there's a commented-out `AddPythonApp` option you can use instead of the WSL executable.
-
----
 
 ## Why We Built This
 
