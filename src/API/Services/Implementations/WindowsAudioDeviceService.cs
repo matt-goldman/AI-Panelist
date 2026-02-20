@@ -10,10 +10,10 @@ namespace API.Services.Implementations;
 public class WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger) : IAudioDeviceService
 {
     private readonly ILogger<WindowsAudioDeviceService> _logger = logger;
-    private List<AudioDeviceInfo> _selectedDevices = new();
+    private List<AudioDeviceInfo> _selectedDevices = [];
     private List<AudioDeviceInfo>? _cachedDevices;
-    private readonly Dictionary<string, string> _displayNames = new();
-    private readonly Dictionary<string, bool> _enabledStates = new();
+    private readonly Dictionary<string, string> _displayNames = [];
+    private readonly Dictionary<string, bool> _enabledStates = [];
 
     public Task<List<AudioDeviceInfo>> GetInputDevicesAsync()
     {
@@ -26,7 +26,7 @@ public class WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger
 
         _logger.LogInformation("Enumerating Windows audio input devices");
 
-        _cachedDevices = new List<AudioDeviceInfo>();
+        _cachedDevices = [];
         var deviceCount = WaveInEvent.DeviceCount;
 
         for (int i = 0; i < deviceCount; i++)
@@ -113,7 +113,7 @@ public class WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger
 
         var devices = await GetInputDevicesAsync();
         var selectedIds = new List<string>();
-        _selectedDevices = new List<AudioDeviceInfo>();
+        _selectedDevices = [];
 
         foreach (var deviceId in deviceIds)
         {

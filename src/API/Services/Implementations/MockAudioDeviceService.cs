@@ -28,8 +28,8 @@ public class MockAudioDeviceService : IAudioDeviceService
 
         _logger.LogInformation("Mock: Enumerating audio input devices");
 
-        _cachedDevices = new List<AudioDeviceInfo>
-        {
+        _cachedDevices =
+        [
             new AudioDeviceInfo
             {
                 Id = "mock-device-1",
@@ -48,7 +48,7 @@ public class MockAudioDeviceService : IAudioDeviceService
                 Name = "Mock Wireless Headset",
                 IsDefault = false
             }
-        };
+        ];
 
         ApplyDisplayNames(_cachedDevices);
         return Task.FromResult(_cachedDevices);
@@ -107,7 +107,7 @@ public class MockAudioDeviceService : IAudioDeviceService
 
         var devices = await GetInputDevicesAsync();
         var selectedIds = new List<string>();
-        _selectedDevices = new List<AudioDeviceInfo>();
+        _selectedDevices = [];
 
         foreach (var deviceId in deviceIds)
         {

@@ -11,8 +11,10 @@ It listens (imperfectly) to a live discussion, maintains a rough sense of the ro
 
 If it works: great.
 If it doesn’t: we thank it for its service and move on.
-
----
+<figure>
+<img src="/assets/panel.jpg" width="700px" />
+<figcaption>Figure: It worked!</figcaption>
+</figure>
 
 ## What This Project Is
 
@@ -27,8 +29,6 @@ If it doesn’t: we thank it for its service and move on.
 - An enterprise architecture reference
 - An autonomous agent
 - A replacement for humans
-
----
 
 ## High-Level Architecture
 
@@ -51,8 +51,6 @@ If it doesn’t: we thank it for its service and move on.
 - Cancel response
 - Disable AI
 
----
-
 ## Design Principles
 
 - No autonomous interjections
@@ -61,8 +59,6 @@ If it doesn’t: we thank it for its service and move on.
 - Never attack individuals
 - Must be killable instantly
 - Failure is acceptable
-
----
 
 ## Operational Flow
 
@@ -74,13 +70,11 @@ If it doesn’t: we thank it for its service and move on.
 6. Return to listening
 7. If needed → overflow → disabled
 
----
 
 ## Removing the AI (Scripted Line)
 
 > “Looks like we’ve overfilled it. Bubbles, thanks for joining us tonight.”
 
----
 
 ## Repository Structure
 
@@ -139,7 +133,6 @@ The system works end-to-end with mock implementations:
 - ✅ State broadcasting via SignalR
 - ✅ Cancel/disable functionality
 
----
 
 ## Using Real AI Services
 
@@ -185,6 +178,17 @@ The system will:
 - Broadcast states via SignalR
 
 **Configuration is simple** - just edit `appsettings.json` to switch between mock and real services. No code changes required!
+
+### Capturing Remote Meeting Audio (Teams, Zoom, etc.)
+
+The current audio capture uses standard Windows input devices (microphones). This works great for in-person events but **won't capture audio from remote participants** in Teams/Zoom calls - their audio comes through your speakers as output, not input.
+
+**Current Workarounds:**
+- Use a physical setup where remote audio plays through speakers and is picked up by a room mic
+- Use virtual audio cable software (VB-Cable, VoiceMeeter) to route system audio to a virtual input device
+
+**Future Enhancement (TODO):**  
+Add WASAPI loopback capture support to `WindowsAudioDeviceService`. This would expose system audio as a selectable input device, allowing direct capture of remote meeting audio without physical workarounds. The loopback device should be disabled by default and opt-in via the moderator app.
 
 ### Documentation
 
