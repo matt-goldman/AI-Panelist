@@ -3,7 +3,7 @@
 ## Equipment
 
 - Laptop Host laptop (high-spec GPU machine)
-- iPad (Bubbles display)
+- Tablet (Bubbles display)
 - Phone (Moderator control)
 - 2x USB-C lapel receivers
 - 1x 3.5mm handheld wireless receiver
@@ -51,7 +51,7 @@ So can Bubbles.
 ## AI Voice Output
 
 Laptop Host → Wireless speaker  
-Speaker placed near iPad.
+Speaker placed near tablet.
 
 AI voice does not need to be recorded live.
 Text + saved WAV is sufficient.
@@ -62,7 +62,7 @@ Text + saved WAV is sufficient.
 
 Preferred:
 - Dedicated travel router
-- Laptop + iPad + Phone on same network
+- Laptop + tablet + Phone on same network
 
 Fallback:
 - Office WiFi

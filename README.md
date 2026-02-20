@@ -7,7 +7,7 @@ A lightweight, local-first AI “panelist” built for a live Beer Driven Devs e
 Bubbles is not a product.
 It’s theatre with guardrails.
 
-It listens (imperfectly) to a live discussion, maintains a rough sense of the room, and speaks only when explicitly invited by the moderator. It has a beer-themed animated presence on an iPad and can be dramatically “overfilled” (overflow animation) if we need to cut it off.
+It listens (imperfectly) to a live discussion, maintains a rough sense of the room, and speaks only when explicitly invited by the moderator. It has a beer-themed animated presence on a tablet and can be dramatically “overfilled” (overflow animation) if we need to cut it off.
 
 If it works: great.
 If it doesn’t: we thank it for its service and move on.
@@ -41,7 +41,7 @@ If it doesn’t: we thank it for its service and move on.
 - Converts responses to speech (TTS)
 - Broadcasts state updates (SignalR)
 
-**Bubbles Display (iPad – .NET MAUI)**  
+**Bubbles Display (Tablet – .NET MAUI)**  
 - Fullscreen animated beer UI
 - Shows states: Idle / Listening / Thinking / Speaking / Overflow / Disabled
 - No AI logic
@@ -98,7 +98,7 @@ If it doesn’t: we thank it for its service and move on.
     /Hubs
       BubblesHub.cs            # SignalR hub for state broadcasting
   
-  /Bubbles                      # .NET MAUI display app (iPad)
+  /Bubbles                      # .NET MAUI display app (tablet)
   /ModeratorApp                 # .NET MAUI control app (Phone)
   /Shared                       # Shared models and state management
 ```
