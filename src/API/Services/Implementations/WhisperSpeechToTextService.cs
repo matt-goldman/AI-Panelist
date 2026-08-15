@@ -1,5 +1,6 @@
+using API.Configuration;
 using API.Services.Interfaces;
-using NAudio.Wave;
+using Microsoft.Extensions.Options;
 using Shared;
 using Whisper.net;
 using Whisper.net.Ggml;
@@ -7,19 +8,33 @@ using Whisper.net.Ggml;
 namespace API.Services.Implementations;
 
 /// <summary>
-/// Speech-to-text service using Whisper.net with NAudio for Windows audio capture.
-/// Supports capturing from multiple audio devices simultaneously.
+/// Speech-to-text service using Whisper.net. Audio capture is delegated to an
+/// <see cref="IAudioCaptureFactory"/>, so this class is platform-agnostic — PipeWire on
+/// Linux, NAudio on Windows. Supports capturing from multiple nodes/devices simultaneously.
+///
+/// Capture runs continuously and is never stopped mid-event. When Bubbles is speaking,
+/// the affected audio is dropped on its way to Whisper rather than at the capture node —
+/// see <see cref="SelfSuppressionGate"/>.
 /// </summary>
 public class WhisperSpeechToTextService(
     ILogger<WhisperSpeechToTextService> logger,
     IAudioDeviceService audioDeviceService,
+    IAudioCaptureFactory captureFactory,
+    SelfSuppressionGate suppressionGate,
+    IOptions<SelfSuppressionOptions> suppressionOptions,
+    IOptions<TranscriptionOptions> transcriptionOptions,
     IConfiguration configuration) : ISpeechToTextService, IDisposable
 {
     private readonly ILogger<WhisperSpeechToTextService> _logger = logger;
     private readonly List<DeviceCapture> _deviceCaptures = [];
     private WhisperFactory? _whisperFactory;
     private CancellationTokenSource? _cts;
-    private volatile bool _isPaused;
+
+    /// <summary>
+    /// Held while transcription is "paused" via the ISpeechToTextService API. Pausing is
+    /// the same mechanism as TTS self-suppression, just without an automatic end.
+    /// </summary>
+    private IDisposable? _manualSuppression;
 
     public event EventHandler<TranscriptionReceivedEventArgs>? TranscriptionReceived;
 
@@ -38,7 +53,7 @@ public class WhisperSpeechToTextService(
 
             // Get selected devices
             var selectedDevices = audioDeviceService.GetSelectedInputDevices();
-            
+
             if (selectedDevices.Count == 0)
             {
                 _logger.LogWarning("No audio devices selected, using default device");
@@ -49,19 +64,27 @@ public class WhisperSpeechToTextService(
                 }
             }
 
+            if (selectedDevices.Count == 0)
+            {
+                _logger.LogError("No audio capture devices available - transcription will not run");
+                return;
+            }
+
             _logger.LogInformation("Starting audio capture from {Count} device(s)", selectedDevices.Count);
 
             // Start capture and transcription for each device
             foreach (var device in selectedDevices)
             {
-                var capture = new DeviceCapture(device, _whisperFactory, _logger);
+                var capture = new DeviceCapture(
+                    device, captureFactory, _whisperFactory, suppressionGate,
+                    suppressionOptions.Value, transcriptionOptions.Value, _logger);
                 capture.TranscriptionReceived += OnDeviceTranscriptionReceived;
                 _deviceCaptures.Add(capture);
-                
-                capture.Start(() => _isPaused, _cts.Token);
+
+                await capture.StartAsync(_cts.Token);
             }
-            
-            _logger.LogInformation("Whisper transcription started successfully on {Count} device(s)", 
+
+            _logger.LogInformation("Whisper transcription started successfully on {Count} device(s)",
                 _deviceCaptures.Count);
         }
         catch (Exception ex)
@@ -80,8 +103,11 @@ public class WhisperSpeechToTextService(
     public async Task StopTranscriptionAsync()
     {
         _logger.LogInformation("Stopping Whisper transcription");
-        
-        _cts?.Cancel();
+
+        if (_cts is not null)
+        {
+            await _cts.CancelAsync();
+        }
 
         // Stop all device captures
         foreach (var capture in _deviceCaptures)
@@ -91,21 +117,22 @@ public class WhisperSpeechToTextService(
             capture.Dispose();
         }
         _deviceCaptures.Clear();
-        
+
         _logger.LogInformation("Whisper transcription stopped");
     }
 
     public Task PauseTranscriptionAsync()
     {
-        _logger.LogInformation("Pausing Whisper transcription");
-        _isPaused = true;
+        _logger.LogInformation("Pausing Whisper transcription (capture keeps running)");
+        _manualSuppression ??= suppressionGate.Suppress("manual pause");
         return Task.CompletedTask;
     }
 
     public Task ResumeTranscriptionAsync()
     {
         _logger.LogInformation("Resuming Whisper transcription");
-        _isPaused = false;
+        _manualSuppression?.Dispose();
+        _manualSuppression = null;
         return Task.CompletedTask;
     }
 
@@ -124,18 +151,18 @@ public class WhisperSpeechToTextService(
         Directory.CreateDirectory(modelDir);
 
         var modelPath = Path.Combine(modelDir, "ggml-base.en.bin");
-        
+
         if (!File.Exists(modelPath))
         {
             _logger.LogInformation("Downloading Whisper base.en model to {Path}...", modelPath);
             _logger.LogInformation("This may take a few minutes on first run...");
-            
+
             try
             {
                 using var modelStream = await WhisperGgmlDownloader.GetGgmlModelAsync(GgmlType.BaseEn);
                 using var fileStream = File.Create(modelPath);
                 await modelStream.CopyToAsync(fileStream);
-                
+
                 _logger.LogInformation("Whisper model downloaded successfully");
             }
             catch (Exception ex)
@@ -154,12 +181,14 @@ public class WhisperSpeechToTextService(
 
     public void Dispose()
     {
+        _manualSuppression?.Dispose();
+
         foreach (var capture in _deviceCaptures)
         {
             capture.Dispose();
         }
         _deviceCaptures.Clear();
-        
+
         _cts?.Dispose();
         _whisperFactory?.Dispose();
     }
@@ -167,56 +196,39 @@ public class WhisperSpeechToTextService(
     /// <summary>
     /// Encapsulates audio capture and transcription for a single device
     /// </summary>
-    private class DeviceCapture(AudioDeviceInfo device, WhisperFactory whisperFactory, ILogger logger) : IDisposable
+    private class DeviceCapture(
+        AudioDeviceInfo device,
+        IAudioCaptureFactory captureFactory,
+        WhisperFactory whisperFactory,
+        SelfSuppressionGate suppressionGate,
+        SelfSuppressionOptions suppressionOptions,
+        TranscriptionOptions transcriptionOptions,
+        ILogger logger) : IDisposable
     {
+        private const int SegmentSamples = IAudioCaptureFactory.SampleRate * 10; // 10 seconds
+
         private readonly ILogger _logger = logger;
-        
-        private WaveInEvent? _waveIn;
+
+        private IAudioCaptureSource? _capture;
         private WhisperProcessor? _processor;
         private Task? _transcriptionTask;
-        private readonly List<float> _audioBuffer = [];
-        private readonly object _bufferLock = new();
-        private Func<bool>? _isPausedCheck;
+        private readonly Queue<AudioBlock> _blocks = new();
+        private readonly Lock _bufferLock = new();
+        private int _bufferedSamples;
 
         public event EventHandler<TranscriptionReceivedEventArgs>? TranscriptionReceived;
 
-        public void Start(Func<bool> isPausedCheck, CancellationToken cancellationToken)
+        public async Task StartAsync(CancellationToken cancellationToken)
         {
-            _isPausedCheck = isPausedCheck;
-            
             // Create a dedicated processor for this device
             _processor = whisperFactory.CreateBuilder()
                 .WithLanguage("en")
                 .WithPrompt("This is a technology panel discussion.")
                 .Build();
 
-            var deviceNumber = int.Parse(device.Id);
-
-            _waveIn = new WaveInEvent
-            {
-                DeviceNumber        = deviceNumber,
-                WaveFormat          = new WaveFormat(16000, 16, 1), // 16kHz, 16-bit, mono (Whisper standard)
-                BufferMilliseconds  = 100
-            };
-
-            _waveIn.DataAvailable += OnAudioDataAvailable;
-            _waveIn.RecordingStopped += (s, e) =>
-            {
-                if (e.Exception != null)
-                {
-                    _logger.LogError(e.Exception, "Audio recording stopped with error on device {DeviceName}", 
-                        device.EffectiveName);
-                }
-                else
-                {
-                    _logger.LogInformation("Audio recording stopped normally on device {DeviceName}", 
-                        device.EffectiveName);
-                }
-            };
-            
-            _waveIn.StartRecording();
-            _logger.LogInformation("Audio capture started on device {DeviceName} (ID: {DeviceId})", 
-                device.EffectiveName, device.Id);
+            _capture = captureFactory.Create(device);
+            _capture.SamplesAvailable += OnSamplesAvailable;
+            await _capture.StartAsync(cancellationToken);
 
             // Start transcription loop for this device
             _transcriptionTask = Task.Run(() => TranscriptionLoopAsync(cancellationToken), cancellationToken);
@@ -224,10 +236,14 @@ public class WhisperSpeechToTextService(
 
         public async Task StopAsync()
         {
-            _waveIn?.StopRecording();
-            _waveIn?.Dispose();
-            _waveIn = null;
-            
+            if (_capture is not null)
+            {
+                _capture.SamplesAvailable -= OnSamplesAvailable;
+                await _capture.StopAsync();
+                _capture.Dispose();
+                _capture = null;
+            }
+
             if (_transcriptionTask != null)
             {
                 try
@@ -241,62 +257,44 @@ public class WhisperSpeechToTextService(
             }
         }
 
-        private void OnAudioDataAvailable(object? sender, WaveInEventArgs e)
+        private void OnSamplesAvailable(object? sender, AudioSamplesEventArgs e)
         {
-            if (_isPausedCheck?.Invoke() == true) return;
-
-            // Convert byte array to float array (16-bit PCM to float)
-            var floatBuffer = new float[e.BytesRecorded / 2];
-            for (int i = 0; i < floatBuffer.Length; i++)
-            {
-                short sample = BitConverter.ToInt16(e.Buffer, i * 2);
-                floatBuffer[i] = sample / 32768f; // Normalize to [-1, 1]
-            }
+            // Never dropped here, whatever the panelist is doing. Gating happens on the way
+            // into Whisper so the capture node is never interrupted.
+            var endUtc = DateTime.UtcNow;
+            var duration = TimeSpan.FromSeconds(e.Samples.Length / (double)IAudioCaptureFactory.SampleRate);
 
             lock (_bufferLock)
             {
-                _audioBuffer.AddRange(floatBuffer);
+                _blocks.Enqueue(new AudioBlock(endUtc - duration, endUtc, e.Samples));
+                _bufferedSamples += e.Samples.Length;
             }
         }
 
         private async Task TranscriptionLoopAsync(CancellationToken cancellationToken)
         {
-            const int samplesPerSegment = 16000 * 10; // 10 seconds of audio at 16kHz
-
             while (!cancellationToken.IsCancellationRequested)
             {
                 try
                 {
                     await Task.Delay(5000, cancellationToken); // Process every 5 seconds
 
-                    if (_isPausedCheck?.Invoke() == true) continue;
+                    var drained = DrainSegment();
+                    if (drained.Count == 0) continue;
 
-                    float[] audioSegment;
-                    lock (_bufferLock)
+                    var runs = AudioSegmentation.SplitOnSuppression(
+                        drained, suppressionGate.IsSuppressed, out var suppressedSamples);
+
+                    if (suppressedSamples > 0)
                     {
-                        if (_audioBuffer.Count < samplesPerSegment / 2) continue; // Wait for more data
-
-                        audioSegment = _audioBuffer.Take(samplesPerSegment).ToArray();
-                        _audioBuffer.RemoveRange(0, Math.Min(samplesPerSegment, _audioBuffer.Count));
+                        _logger.LogInformation(
+                            "Dropped {Seconds:F1}s of self-audio from {DeviceName} before transcription",
+                            suppressedSamples / (double)IAudioCaptureFactory.SampleRate, device.EffectiveName);
                     }
 
-                    // Process with Whisper
-                    await foreach (var segment in _processor!.ProcessAsync(audioSegment, cancellationToken))
+                    foreach (var run in runs)
                     {
-                        var text = segment.Text.Trim();
-                        if (!string.IsNullOrWhiteSpace(text))
-                        {
-                            _logger.LogDebug("Whisper transcription from {DeviceName}: {Text}", 
-                                device.EffectiveName, text);
-                            
-                            TranscriptionReceived?.Invoke(this, new TranscriptionReceivedEventArgs
-                            {
-                                Text = text,
-                                Timestamp = DateTime.UtcNow,
-                                IsFinal = true,
-                                SpeakerName = device.EffectiveName
-                            });
-                        }
+                        await TranscribeAsync(run, cancellationToken);
                     }
                 }
                 catch (OperationCanceledException)
@@ -305,16 +303,92 @@ public class WhisperSpeechToTextService(
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error during Whisper transcription on device {DeviceName}", 
+                    _logger.LogError(ex, "Error during Whisper transcription on device {DeviceName}",
                         device.EffectiveName);
                     // Continue processing despite errors
                 }
             }
         }
 
+        /// <summary>
+        /// Take up to one segment's worth of buffered blocks. Blocks are taken whole —
+        /// they are only 100ms each, which is far finer than the suppression tail.
+        /// </summary>
+        private List<AudioBlock> DrainSegment()
+        {
+            var drained = new List<AudioBlock>();
+
+            lock (_bufferLock)
+            {
+                if (_bufferedSamples < SegmentSamples / 2) return drained; // Wait for more data
+
+                var taken = 0;
+                while (_blocks.Count > 0 && taken < SegmentSamples)
+                {
+                    var block = _blocks.Dequeue();
+                    _bufferedSamples -= block.Samples.Length;
+                    taken += block.Samples.Length;
+                    drained.Add(block);
+                }
+            }
+
+            return drained;
+        }
+
+        private async Task TranscribeAsync(List<AudioBlock> run, CancellationToken cancellationToken)
+        {
+            var seconds = AudioSegmentation.DurationSeconds(run);
+
+            if (seconds < suppressionOptions.MinimumSegmentSeconds)
+            {
+                _logger.LogDebug("Skipping {Seconds:F2}s fragment from {DeviceName} - too short to transcribe",
+                    seconds, device.EffectiveName);
+                return;
+            }
+
+            // Whisper answers confidently even when handed silence, so don't ask.
+            var rms = AudioSegmentation.Rms(run);
+            if (rms < transcriptionOptions.SilenceRmsThreshold)
+            {
+                _logger.LogDebug("Skipping {Seconds:F1}s of silence from {DeviceName} (RMS {Rms:F5})",
+                    seconds, device.EffectiveName, rms);
+                return;
+            }
+
+            var audio = AudioSegmentation.Concatenate(run);
+            var runStart = run[0].StartUtc;
+
+            await foreach (var segment in _processor!.ProcessAsync(audio, cancellationToken))
+            {
+                var text = segment.Text.Trim();
+                if (string.IsNullOrWhiteSpace(text)) continue;
+
+                if (transcriptionOptions.DropNonSpeechArtefacts && TranscriptFilter.IsNonSpeech(text))
+                {
+                    _logger.LogDebug("Dropping non-speech artefact from {DeviceName}: {Text}",
+                        device.EffectiveName, text);
+                    continue;
+                }
+
+                _logger.LogDebug("Whisper transcription from {DeviceName}: {Text}",
+                    device.EffectiveName, text);
+
+                TranscriptionReceived?.Invoke(this, new TranscriptionReceivedEventArgs
+                {
+                    // The time the audio happened, not the time Whisper finished with it -
+                    // otherwise everything looks several seconds newer than it is and the
+                    // "recent transcript" window is skewed.
+                    Text        = text,
+                    Timestamp   = runStart + segment.Start,
+                    IsFinal     = true,
+                    SpeakerName = device.EffectiveName
+                });
+            }
+        }
+
         public void Dispose()
         {
-            _waveIn?.Dispose();
+            _capture?.Dispose();
             _processor?.Dispose();
         }
     }

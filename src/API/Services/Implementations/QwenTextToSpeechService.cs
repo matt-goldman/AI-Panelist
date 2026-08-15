@@ -1,35 +1,42 @@
-﻿using API.Services.Interfaces;
-using NAudio.Wave;
+using API.Services.Interfaces;
 
 namespace API.Services.Implementations;
 
 /// <summary>
-/// Text-to-speech service using Qwen TTS via HTTP endpoint
+/// Text-to-speech service using Qwen TTS via HTTP endpoint.
+///
+/// Synthesis and playback are deliberately separate: <see cref="SynthesizeAsync"/> returns
+/// WAV bytes so the streamed response path can generate the next chunk while the current one
+/// plays, and playback goes through <see cref="IAudioPlaybackService"/> so the audio lands in
+/// whichever sink the platform backend is pointed at (the AI guest's virtual mic on Linux).
 /// </summary>
 public class QwenTextToSpeechService : ITextToSpeechService
 {
     private readonly HttpClient _client;
     private readonly ILogger<QwenTextToSpeechService> _logger;
     private readonly ResponseCaptureService _captureService;
+    private readonly IAudioPlaybackService _playback;
     private CancellationTokenSource? _cts;
-    private WaveOutEvent? _waveOut;
-    private readonly object _lock = new();
 
     public bool IsSpeaking { get; private set; }
 
     public QwenTextToSpeechService(
         HttpClient client,
         ILogger<QwenTextToSpeechService> logger,
-        ResponseCaptureService captureService)
+        ResponseCaptureService captureService,
+        IAudioPlaybackService playback)
     {
         _client = client;
         _logger = logger;
         _captureService = captureService;
+        _playback = playback;
+
         _logger.LogInformation("Qwen TTS initialized");
         _logger.LogInformation("Base address for HTTP client: {BaseAddress}", _client.BaseAddress);
+
         if (_client.BaseAddress is null)
         {
-            throw new Exception("Qwen TTS HTTP client base address is null. Please check configuration.");
+            throw new InvalidOperationException("Qwen TTS HTTP client base address is null. Please check configuration.");
         }
     }
 
@@ -41,13 +48,7 @@ public class QwenTextToSpeechService : ITextToSpeechService
 
         try
         {
-            // Get audio bytes from Qwen TTS endpoint
-            _logger.LogInformation("Qwen TTS: Calling synthesis API...");
             var audioBytes = await SynthesizeAsync(text, _cts.Token);
-            _logger.LogInformation("Qwen TTS: Synthesis complete, received {Bytes} bytes", audioBytes.Length);
-
-            // Capture audio bytes asynchronously (non-blocking, zero latency impact)
-            _captureService.CaptureAudioResponse(audioBytes, text);
 
             if (_cts.Token.IsCancellationRequested)
             {
@@ -61,8 +62,7 @@ public class QwenTextToSpeechService : ITextToSpeechService
                 await onPlaybackStarting();
             }
 
-            // Play audio to host speaker using NAudio
-            await PlayAudioAsync(audioBytes, _cts.Token);
+            await _playback.PlayAsync(audioBytes, _cts.Token);
 
             _logger.LogInformation("Qwen TTS: Speech completed successfully");
         }
@@ -88,87 +88,27 @@ public class QwenTextToSpeechService : ITextToSpeechService
         }
     }
 
-    public Task StopAsync()
+    public async Task<byte[]> SynthesizeAsync(string text, CancellationToken cancellationToken = default)
+    {
+        _logger.LogDebug("Qwen TTS: Synthesizing {Length} characters", text.Length);
+
+        var response = await _client.PostAsJsonAsync("/tts", new { text, language = "English" }, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        // Response is raw audio WAV bytes
+        var audioBytes = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        _logger.LogDebug("Qwen TTS: Synthesis complete, received {Bytes} bytes", audioBytes.Length);
+
+        // Capture audio bytes asynchronously (non-blocking, zero latency impact)
+        _captureService.CaptureAudioResponse(audioBytes, text);
+
+        return audioBytes;
+    }
+
+    public async Task StopAsync()
     {
         _logger.LogInformation("Qwen TTS: Stopping speech");
         _cts?.Cancel();
-
-        lock (_lock)
-        {
-            if (_waveOut is not null)
-            {
-                _waveOut.Stop();
-                _waveOut.Dispose();
-                _waveOut = null;
-            }
-        }
-
-        return Task.CompletedTask;
-    }
-
-    private async Task<byte[]> SynthesizeAsync(string text, CancellationToken cancellationToken)
-    {
-        var response = await _client.PostAsJsonAsync("/tts", new { text, language = "English" }, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        // Response is raw audio WAV bytes
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken);
-    }
-
-    private async Task PlayAudioAsync(byte[] audioBytes, CancellationToken cancellationToken)
-    {
-        var tcs = new TaskCompletionSource();
-
-        // Create streams that will be kept alive until playback completes
-        var memoryStream = new MemoryStream(audioBytes);
-        WaveFileReader? waveStream = null;
-
-        try
-        {
-            waveStream = new WaveFileReader(memoryStream);
-
-            lock (_lock)
-            {
-                _waveOut = new WaveOutEvent();
-                _waveOut.Init(waveStream);
-            }
-
-            _waveOut.PlaybackStopped += (sender, args) =>
-            {
-                if (args.Exception is not null)
-                {
-                    tcs.TrySetException(args.Exception);
-                }
-                else
-                {
-                    tcs.TrySetResult();
-                }
-            };
-
-            using var registration = cancellationToken.Register(() =>
-            {
-                lock (_lock)
-                {
-                    _waveOut?.Stop();
-                }
-                tcs.TrySetCanceled(cancellationToken);
-            });
-
-            _logger.LogInformation("Qwen TTS: Starting audio playback");
-            _waveOut.Play();
-
-            await tcs.Task;
-        }
-        finally
-        {
-            // Dispose streams after playback completes
-            waveStream?.Dispose();
-            memoryStream.Dispose();
-
-            lock (_lock)
-            {
-                _waveOut?.Dispose();
-                _waveOut = null;
-            }
-        }
+        await _playback.StopAsync();
     }
 }

@@ -107,17 +107,20 @@ def load_model():
     )
     print(f"[{time.time() - start:.2f}s] Voice prompt created from reference audio (ICL mode)")
 
-    # Enable optimizations
+    # Enable optimizations (if available in this version)
     print("\nEnabling optimizations...")
-    model.enable_streaming_optimizations(
-        decode_window_frames=300,  # Larger window for non-streaming
-        use_compile=True,
-        use_cuda_graphs=False,  # Variable input sizes
-        compile_mode="max-autotune",
-        use_fast_codebook=True,
-        compile_codebook_predictor=True,
-        compile_talker=True,
-    )
+    try:
+        model.enable_streaming_optimizations(
+            decode_window_frames=300,  # Larger window for non-streaming
+            use_compile=True,
+            use_cuda_graphs=False,  # Variable input sizes
+            compile_mode="max-autotune",
+            use_fast_codebook=True,
+            compile_codebook_predictor=True,
+            compile_talker=True,
+        )
+    except AttributeError:
+        print("  Note: enable_streaming_optimizations not available in this qwen-tts version")
 
     # Warmup runs (compilation happens here)
     print("\nWarmup runs (this will take ~2 minutes for compilation)...")
@@ -151,8 +154,15 @@ async def startup():
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health():
-    """Health check endpoint."""
+async def health(response: Response):
+    """Health check endpoint.
+
+    Returns 503 until the model has compiled and warmed up, so orchestrators
+    (Aspire's WaitFor) block on a genuinely usable server rather than an open port.
+    """
+    if not is_ready:
+        response.status_code = 503
+
     return HealthResponse(
         status="ok" if is_ready else "warming_up",
         ready=is_ready,

@@ -197,8 +197,20 @@ public class ResponseCaptureService : IHostedService, IDisposable
 
     public void Dispose()
     {
-        _cts?.Cancel();
+        // The host disposes hosted services on shutdown, including after a failed startup
+        // where StopAsync already disposed this. Cancelling a disposed CTS throws, and an
+        // unhandled exception here replaces the real startup error with a useless one.
+        try
+        {
+            _cts?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Already torn down.
+        }
+
         _cts?.Dispose();
+        _cts = null;
     }
 
     private enum CaptureType

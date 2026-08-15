@@ -14,6 +14,13 @@ public interface ITextToSpeechService
     Task SpeakAsync(string text, CancellationToken cancellationToken = default, Func<Task>? onPlaybackStarting = null);
 
     /// <summary>
+    /// Synthesize text to a WAV byte array without playing it. This is what the streamed
+    /// response path uses: it synthesizes chunk N+1 while chunk N is still playing, so
+    /// synthesis and playback have to be separable.
+    /// </summary>
+    Task<byte[]> SynthesizeAsync(string text, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Stop any currently playing speech
     /// </summary>
     Task StopAsync();

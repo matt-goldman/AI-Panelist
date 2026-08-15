@@ -3,6 +3,7 @@ using API.Endpoints;
 using API.Hubs;
 using API.Services;
 using API.Services.Implementations;
+using API.Services.Implementations.PipeWire;
 using API.Services.Interfaces;
 using Microsoft.Extensions.AI;
 
@@ -27,6 +28,20 @@ builder.Services.Configure<PromptConfiguration>(
 // Configure response capture options
 builder.Services.Configure<ResponseCaptureOptions>(
     builder.Configuration.GetSection(ResponseCaptureOptions.SectionName));
+
+// Configure PipeWire (Linux audio backend) options
+builder.Services.Configure<PipeWireOptions>(
+    builder.Configuration.GetSection(PipeWireOptions.SectionName));
+
+// Configure and register the self-suppression gate, which stops Bubbles transcribing
+// its own voice when it returns through the StreamYard mix.
+builder.Services.Configure<SelfSuppressionOptions>(
+    builder.Configuration.GetSection(SelfSuppressionOptions.SectionName));
+builder.Services.AddSingleton<SelfSuppressionGate>();
+
+// Guards against Whisper inventing text during the quiet stretches of a panel.
+builder.Services.Configure<TranscriptionOptions>(
+    builder.Configuration.GetSection(TranscriptionOptions.SectionName));
 
 // Register prompt service
 builder.Services.AddSingleton<PromptService>();
@@ -107,6 +122,10 @@ switch (options.TtsServiceType?.ToLower())
     case "azure":
         builder.Services.AddSingleton<ITextToSpeechService, AzureTextToSpeechService>();
         break;
+    case "espeak":
+        // Rehearsal/fallback: real words, no GPU, no model download.
+        builder.Services.AddSingleton<ITextToSpeechService, EspeakTextToSpeechService>();
+        break;
     case "qwen3-tts":
         // Configure HttpClient for Qwen TTS
         builder.Services.AddHttpClient<ITextToSpeechService, QwenTextToSpeechService>(client =>
@@ -127,8 +146,33 @@ switch (options.AudioDeviceServiceType?.ToLower())
     case "windows":
         builder.Services.AddSingleton<IAudioDeviceService, WindowsAudioDeviceService>();
         break;
+    case "pipewire":
+        builder.Services.AddSingleton<IAudioDeviceService, PipeWireAudioDeviceService>();
+        break;
     default:
         builder.Services.AddSingleton<IAudioDeviceService, MockAudioDeviceService>();
+        break;
+}
+
+// Audio Capture Factory - the seam that keeps Whisper free of any platform audio API.
+// Follows the audio device backend, since capture targets are identified by that backend's IDs.
+switch (options.AudioDeviceServiceType?.ToLower())
+{
+    case "windows":
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException(
+                "AIPanelist:AudioDeviceServiceType is 'Windows' but this is not Windows. Use 'PipeWire' on Linux.");
+        }
+        builder.Services.AddSingleton<IAudioCaptureFactory, NAudioAudioCaptureFactory>();
+        break;
+    case "pipewire":
+        builder.Services.AddSingleton<IAudioCaptureFactory, PipeWireAudioCaptureFactory>();
+        break;
+    default:
+        // Mock devices produce no audio; Whisper would sit idle, so fail loudly instead
+        // only if it is actually asked for. Registering the PipeWire factory keeps DI valid.
+        builder.Services.AddSingleton<IAudioCaptureFactory, PipeWireAudioCaptureFactory>();
         break;
 }
 
@@ -137,6 +181,9 @@ switch (options.AudioPlaybackServiceType?.ToLower())
 {
     case "windows":
         builder.Services.AddSingleton<IAudioPlaybackService, WindowsAudioPlaybackService>();
+        break;
+    case "pipewire":
+        builder.Services.AddSingleton<IAudioPlaybackService, PipeWireAudioPlaybackService>();
         break;
     default:
         builder.Services.AddSingleton<IAudioPlaybackService, MockAudioPlaybackService>();

@@ -138,6 +138,76 @@ public class WindowsAudioPlaybackService : IAudioPlaybackService, IDisposable
         return Task.CompletedTask;
     }
 
+    public Task<IAudioPlaybackStream> OpenStreamAsync(
+        AudioStreamFormat format,
+        CancellationToken cancellationToken = default)
+    {
+        _logger.LogInformation("NAudio: Opening streaming playback ({Rate}Hz {Channels}ch)",
+            format.SampleRate, format.Channels);
+
+        var waveFormat = new WaveFormat(format.SampleRate, format.BitsPerSample, format.Channels);
+        var buffer = new BufferedWaveProvider(waveFormat)
+        {
+            // Enough headroom for a whole response so writes never block on a full buffer.
+            BufferDuration          = TimeSpan.FromMinutes(2),
+            DiscardOnBufferOverflow = false
+        };
+
+        var waveOut = new WaveOutEvent();
+        waveOut.Init(buffer);
+        waveOut.Play();
+
+        _waveOut = waveOut;
+        IsPlaying = true;
+
+        return Task.FromResult<IAudioPlaybackStream>(new NAudioPlaybackStream(this, waveOut, buffer, _logger));
+    }
+
+    /// <summary>
+    /// Gapless playback backed by a <see cref="BufferedWaveProvider"/>: chunks written
+    /// while earlier audio is still playing simply extend the buffer.
+    /// </summary>
+    private sealed class NAudioPlaybackStream(
+        WindowsAudioPlaybackService owner,
+        WaveOutEvent waveOut,
+        BufferedWaveProvider buffer,
+        ILogger logger) : IAudioPlaybackStream
+    {
+        public Task WriteAsync(ReadOnlyMemory<byte> pcm, CancellationToken cancellationToken = default)
+        {
+            buffer.AddSamples(pcm.ToArray(), 0, pcm.Length);
+            return Task.CompletedTask;
+        }
+
+        public async Task CompleteAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                // Wait for the buffer to drain rather than cutting the tail off.
+                while (buffer.BufferedBytes > 0 && !cancellationToken.IsCancellationRequested)
+                {
+                    await Task.Delay(50, cancellationToken);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                logger.LogInformation("NAudio: Streaming playback cancelled while draining");
+            }
+            finally
+            {
+                waveOut.Stop();
+                owner.Cleanup();
+            }
+        }
+
+        public ValueTask DisposeAsync()
+        {
+            waveOut.Stop();
+            owner.Cleanup();
+            return ValueTask.CompletedTask;
+        }
+    }
+
     private void Cleanup()
     {
         _waveOut?.Dispose();

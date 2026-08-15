@@ -20,6 +20,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private readonly IAudioPlaybackService _audioPlayback;
     private readonly TranscriptBufferService _transcriptBuffer;
     private readonly ResponseCaptureService _captureService;
+    private readonly SelfSuppressionGate _suppressionGate;
     private readonly AIPanelistOptions _options;
 
     private Timer? _summaryTimer;
@@ -42,6 +43,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         IAudioPlaybackService audioPlayback,
         TranscriptBufferService transcriptBuffer,
         ResponseCaptureService captureService,
+        SelfSuppressionGate suppressionGate,
         IOptions<AIPanelistOptions> options)
     {
         _logger = logger;
@@ -52,6 +54,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _audioPlayback = audioPlayback;
         _transcriptBuffer = transcriptBuffer;
         _captureService = captureService;
+        _suppressionGate = suppressionGate;
         _options = options.Value;
 
         // Subscribe to transcription events
@@ -148,6 +151,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             {
                 if (File.Exists(_options.IntroPhrase))
                 {
+                    using var speaking = _suppressionGate.Suppress("intro");
                     await SetStateAsync(AiPanelistState.Speaking);
                     await _audioPlayback.PlayAsync(_options.IntroPhrase, CancellationToken.None);
                 }
@@ -292,11 +296,13 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private async Task GenerateAndSpeakResponseAsync(CancellationToken cancellationToken)
     {
         _isResponseInProgress = true;
+
+        // Opened the moment audio actually starts leaving the app, not now: the hosts may
+        // still be talking while we think, and that is transcript we want to keep.
+        IDisposable? speaking = null;
+
         try
         {
-            // Pause STT during response generation
-            await _sttService.PauseTranscriptionAsync();
-
             // Play filler phrase if enabled (with separate cancellation so we can interrupt it)
             _fillerCts?.Cancel();
             _fillerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -310,6 +316,9 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
                 // Play filler phrase concurrently with thinking (will be interrupted when TTS starts)
                 _ = Task.Run(async () =>
                 {
+                    // A filler phrase is still Bubbles' voice going out over the stream,
+                    // so it needs the same suppression as a real response.
+                    using var fillerSuppression = _suppressionGate.Suppress("filler phrase");
                     try
                     {
                         if (File.Exists(fillerFile))
@@ -358,34 +367,34 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
             // Speak the response - state changes to Speaking when audio playback actually starts
             _logger.LogInformation("Starting TTS synthesis...");
-            await _ttsService.SpeakAsync(response, cancellationToken, async () =>
+            await _ttsService.SpeakAsync(response, cancellationToken, () =>
             {
                 _logger.LogInformation("Audio ready, starting playback");
-                await SetStateAsync(AiPanelistState.Speaking);
+                speaking = _suppressionGate.Suppress("tts playback");
+                return SetStateAsync(AiPanelistState.Speaking);
             });
 
             _logger.LogInformation("Response completed");
 
             // Return to Listening state
             await SetStateAsync(AiPanelistState.Listening);
-
-            // Resume STT
-            await _sttService.ResumeTranscriptionAsync();
         }
         catch (OperationCanceledException)
         {
             _logger.LogInformation("Response generation cancelled");
             await SetStateAsync(AiPanelistState.Listening);
-            await _sttService.ResumeTranscriptionAsync();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error generating/speaking response");
             await SetStateAsync(AiPanelistState.Listening);
-            await _sttService.ResumeTranscriptionAsync();
         }
         finally
         {
+            // Closing the scope starts the tail: transcripts stay suppressed for a further
+            // few hundred milliseconds while our audio is still in flight through
+            // StreamYard and back into the captured tab mix.
+            speaking?.Dispose();
             _isResponseInProgress = false;
         }
     }

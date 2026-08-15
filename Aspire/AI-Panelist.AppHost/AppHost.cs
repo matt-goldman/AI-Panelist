@@ -1,5 +1,3 @@
-using k8s.Models;
-
 var builder = DistributedApplication.CreateBuilder(args);
 
 // NOTE: Stopped using this because of too many problems. Client integration doesn't work,
@@ -21,19 +19,41 @@ var responses = ollama.AddModel("responses", "gpt-oss:20b");
 // TTS Server (Qwen3-TTS)
 // -----------------------
 // On Windows: PyTorch CUDA has issues, so we run TTS in WSL where CUDA works properly.
-// Copy server.py from src/QwenAPI to your WSL environment and set up a Python venv with requirements.txt.
-// 
-// On Linux/macOS: Comment out the WSL executable below and uncomment the AddPythonApp instead.
+// On Linux: run it natively — removing the WSL hop is one of the things the Linux move buys us.
+//
+// Configure via appsettings:
+//   QwenTts:WorkingDirectory  directory containing server.py (default: the repo's src/QwenAPI)
+//   QwenTts:VenvPath          venv directory, relative to WorkingDirectory (default: .venv)
+//   QwenTts:WslDistro         Windows only (default: Ubuntu-22.04)
+//   QwenTts:RefAudio          reference audio for voice cloning, passed as TTS_REF_AUDIO
+//   QwenTts:RefText           transcript of that audio, passed as TTS_REF_TEXT
+var ttsWorkingDirectory = builder.Configuration["QwenTts:WorkingDirectory"] ?? "../../src/QwenAPI";
+var ttsVenvPath = builder.Configuration["QwenTts:VenvPath"] ?? ".venv";
 
-// Option 1: WSL (Windows) - run server.py from your WSL environment
-var tts = builder.AddExecutable("qwen-tts", "wsl", ".",
-    "-d", "Ubuntu-22.04", "--", "bash", "-c",
-    "source ~/qwentts/qwen-tts-venv/bin/activate && cd ~/qwentts && python server.py")
-    .WithHttpEndpoint(port: 8000, name: "http", isProxied: false);
+var tts = OperatingSystem.IsWindows()
+    ? builder.AddExecutable("qwen-tts", "wsl", ".",
+        "-d", builder.Configuration["QwenTts:WslDistro"] ?? "Ubuntu-22.04", "--", "bash", "-c",
+        "source ~/qwentts/qwen-tts-venv/bin/activate && cd ~/qwentts && python server.py")
+    : builder.AddExecutable("qwen-tts", "bash", ttsWorkingDirectory,
+        "-c", $"source {ttsVenvPath}/bin/activate && exec python server.py");
 
-// Option 2: Native Python (Linux/macOS) - uncomment this and comment out the WSL executable above
-// var tts = builder.AddPythonApp("qwen-tts", "../src/QwenAPI", "server.py")
-//     .WithHttpEndpoint(port: 8000, name: "http", isProxied: false);
+tts = tts
+    .WithHttpEndpoint(port: 8000, name: "http", isProxied: false)
+    // /health returns 503 until the model has compiled and warmed up (~2 min from cold),
+    // so WaitFor below actually waits for a usable TTS server rather than just a live port.
+    .WithHttpHealthCheck("/health", endpointName: "http");
+
+var refAudio = builder.Configuration["QwenTts:RefAudio"];
+if (!string.IsNullOrWhiteSpace(refAudio))
+{
+    tts = tts.WithEnvironment("TTS_REF_AUDIO", refAudio);
+}
+
+var refText = builder.Configuration["QwenTts:RefText"];
+if (!string.IsNullOrWhiteSpace(refText))
+{
+    tts = tts.WithEnvironment("TTS_REF_TEXT", refText);
+}
 
 var api = builder.AddProject<Projects.API>("api")
     .WithReference(responses)

@@ -34,7 +34,11 @@ public class AzureTextToSpeechService : ITextToSpeechService
         // Use Australian voice as mentioned in the original VoiceService.cs
         var voiceName = configuration["AzureVoiceSettings:VoiceName"] ?? "en-AU-WilliamNeural";
         _speechConfig.SpeechSynthesisVoiceName = voiceName;
-        
+
+        // RIFF-wrapped PCM so SynthesizeAsync returns something WavAudio can parse.
+        _speechConfig.SetSpeechSynthesisOutputFormat(SpeechSynthesisOutputFormat.Riff24Khz16BitMonoPcm);
+
+
         _logger.LogInformation("Azure TTS initialized with voice: {VoiceName}", voiceName);
     }
 
@@ -96,6 +100,25 @@ public class AzureTextToSpeechService : ITextToSpeechService
             _cts?.Dispose();
             _cts = null;
         }
+    }
+
+    public async Task<byte[]> SynthesizeAsync(string text, CancellationToken cancellationToken = default)
+    {
+        _logger.LogDebug("Azure TTS: Synthesizing {Length} characters", text.Length);
+
+        // Passing a null AudioConfig means "don't play it, hand me the bytes" — required for
+        // the streamed path, where playback is owned by IAudioPlaybackService.
+        using var synthesizer = new SpeechSynthesizer(_speechConfig, null);
+        using var result = await synthesizer.SpeakTextAsync(text);
+
+        if (result.Reason != ResultReason.SynthesizingAudioCompleted)
+        {
+            var cancellation = SpeechSynthesisCancellationDetails.FromResult(result);
+            throw new InvalidOperationException(
+                $"Azure TTS synthesis failed: {cancellation.Reason} {cancellation.ErrorCode} - {cancellation.ErrorDetails}");
+        }
+
+        return result.AudioData;
     }
 
     public Task StopAsync()
