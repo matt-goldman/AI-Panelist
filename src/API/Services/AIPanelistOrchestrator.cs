@@ -21,6 +21,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private readonly TranscriptBufferService _transcriptBuffer;
     private readonly ResponseCaptureService _captureService;
     private readonly SelfSuppressionGate _suppressionGate;
+    private readonly StreamingSpeechPipeline _streamingSpeech;
+    private readonly StreamingResponseOptions _streamingOptions;
     private readonly AIPanelistOptions _options;
 
     private Timer? _summaryTimer;
@@ -44,6 +46,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         TranscriptBufferService transcriptBuffer,
         ResponseCaptureService captureService,
         SelfSuppressionGate suppressionGate,
+        StreamingSpeechPipeline streamingSpeech,
+        IOptions<StreamingResponseOptions> streamingOptions,
         IOptions<AIPanelistOptions> options)
     {
         _logger = logger;
@@ -55,6 +59,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _transcriptBuffer = transcriptBuffer;
         _captureService = captureService;
         _suppressionGate = suppressionGate;
+        _streamingSpeech = streamingSpeech;
+        _streamingOptions = streamingOptions.Value;
         _options = options.Value;
 
         // Subscribe to transcription events
@@ -301,8 +307,18 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         // still be talking while we think, and that is transcript we want to keep.
         IDisposable? speaking = null;
 
+        // Time-to-first-audio is the metric that matters, not total generation time.
+        // Logged on both paths so the streamed and non-streamed behaviour are comparable.
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
         try
         {
+            if (_streamingOptions.Enabled)
+            {
+                await StreamResponseAsync(cancellationToken, scope => speaking = scope);
+                return;
+            }
+
             // Play filler phrase if enabled (with separate cancellation so we can interrupt it)
             _fillerCts?.Cancel();
             _fillerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -369,7 +385,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             _logger.LogInformation("Starting TTS synthesis...");
             await _ttsService.SpeakAsync(response, cancellationToken, () =>
             {
-                _logger.LogInformation("Audio ready, starting playback");
+                _logger.LogInformation("Time to first audio: {Ms}ms (non-streamed)",
+                    (int)stopwatch.Elapsed.TotalMilliseconds);
                 speaking = _suppressionGate.Suppress("tts playback");
                 return SetStateAsync(AiPanelistState.Speaking);
             });
@@ -397,6 +414,44 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             speaking?.Dispose();
             _isResponseInProgress = false;
         }
+    }
+
+    /// <summary>
+    /// The streamed path: tokens are cut into clauses and spoken as they arrive, so the
+    /// first sound lands while the model is still writing.
+    ///
+    /// There are no filler phrases here, deliberately. They existed to cover the gap
+    /// between the trigger and the answer; the first real clause now fills that gap
+    /// coherently, and a canned "Great question!" would collide with it.
+    /// </summary>
+    private async Task StreamResponseAsync(CancellationToken cancellationToken, Action<IDisposable> onSpeakingScope)
+    {
+        await SetStateAsync(AiPanelistState.Thinking);
+
+        // A consistent snapshot: the summary timer must not swap the summary out from under
+        // a response that has already read half of it.
+        string summary;
+        lock (_summaryLock)
+        {
+            summary = _currentSummary;
+        }
+        var recentTranscript = _transcriptBuffer.GetRecentTranscript(TimeSpan.FromSeconds(60));
+
+        _logger.LogInformation("Streaming response...");
+
+        var tokens = _llmService.StreamResponseAsync(summary, recentTranscript, cancellationToken);
+
+        var result = await _streamingSpeech.SpeakAsync(tokens, () =>
+        {
+            _logger.LogInformation("First audio, starting playback");
+            onSpeakingScope(_suppressionGate.Suppress("streamed tts playback"));
+            return SetStateAsync(AiPanelistState.Speaking);
+        }, cancellationToken);
+
+        _logger.LogInformation("Response spoken in {Chunks} chunks: {Response}", result.ChunkCount, result.Text);
+        _captureService.CaptureTextResponse(result.Text, summary);
+
+        await SetStateAsync(AiPanelistState.Listening);
     }
 
     private async Task SetStateAsync(AiPanelistState newState)

@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+
 namespace API.Services.Interfaces;
 
 /// <summary>
@@ -14,4 +16,31 @@ public interface ILanguageModelService
     /// Generate a conversational response based on summary and recent transcript
     /// </summary>
     Task<string> GenerateResponseAsync(string summary, string recentTranscript, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Stream a conversational response as it is generated.
+    ///
+    /// This is what makes time-to-first-audio short: chunks are flushed to TTS at clause
+    /// boundaries while the model is still writing the rest. Implementations must yield
+    /// only <em>answer</em> text — if a model emits reasoning tokens first, streaming those
+    /// would gate the first audio on the whole thinking phase, which is worse than not
+    /// streaming at all.
+    ///
+    /// The default implementation falls back to generating the whole response and yielding
+    /// it as a single chunk, so a non-streaming backend still works (just without the
+    /// latency benefit).
+    /// </summary>
+    async IAsyncEnumerable<string> StreamResponseAsync(
+        string summary,
+        string recentTranscript,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        yield return await GenerateResponseAsync(summary, recentTranscript, cancellationToken);
+    }
+
+    /// <summary>
+    /// Whether this implementation streams for real, rather than relying on the
+    /// single-chunk fallback above. Used only for logging an accurate startup summary.
+    /// </summary>
+    bool SupportsStreaming => false;
 }

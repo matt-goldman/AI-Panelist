@@ -43,6 +43,12 @@ builder.Services.AddSingleton<SelfSuppressionGate>();
 builder.Services.Configure<TranscriptionOptions>(
     builder.Configuration.GetSection(TranscriptionOptions.SectionName));
 
+// Streamed responses: chunk the answer at clause boundaries and speak it as it arrives.
+builder.Services.Configure<StreamingResponseOptions>(
+    builder.Configuration.GetSection(StreamingResponseOptions.SectionName));
+builder.Services.AddSingleton<ResponseChunker>();
+builder.Services.AddSingleton<StreamingSpeechPipeline>();
+
 // Register prompt service
 builder.Services.AddSingleton<PromptService>();
 
@@ -70,9 +76,81 @@ switch (options.SttServiceType?.ToLower())
         break;
 }
 
+// Described in the startup summary once the app is built.
+var chatClientDescription = (string?)null;
+
 // LLM Service
+//
+// The "chatclient" option is the config-driven path: one implementation over
+// Microsoft.Extensions.AI's IChatClient, with the provider chosen at runtime by
+// ChatClient:Provider. It is the only option that streams, and streaming is what makes
+// time-to-first-audio short. The others are kept as-is so nothing that worked stops working.
 switch (options.LlmServiceType?.ToLower())
 {
+    case "chatclient":
+        var provider = builder.Configuration["ChatClient:Provider"]?.ToLower() ?? "ollama";
+
+        // Under Aspire the model is already part of the injected connection string, so
+        // don't make it be configured twice.
+        var aspireOllama = builder.Configuration.GetConnectionString("responses");
+        var model = builder.Configuration["ChatClient:Model"]
+                    ?? ReadConnectionStringValue(aspireOllama, "Model")
+                    ?? throw new InvalidOperationException("ChatClient:Model must be set when LlmServiceType is 'ChatClient'.");
+
+        switch (provider)
+        {
+            case "ollama":
+                // Prefer an explicit endpoint; otherwise use whatever Aspire injected for
+                // the "responses" resource, so this works both with a containerised Ollama
+                // started by the AppHost and with one you run yourself.
+                var ollamaEndpoint = builder.Configuration["ChatClient:Endpoint"]
+                                     ?? ResolveAspireOllamaEndpoint(aspireOllama)
+                                     ?? "http://localhost:11434";
+
+                chatClientDescription = $"Ollama {model} at {ollamaEndpoint}";
+                builder.Services.AddSingleton<IChatClient>(
+                    new OllamaSharp.OllamaApiClient(new Uri(ollamaEndpoint), model));
+                break;
+
+            case "openai":
+                // Also covers any OpenAI-compatible endpoint (a local vLLM, a gateway, and
+                // so on) via ChatClient:Endpoint.
+                var apiKey = builder.Configuration["ChatClient:ApiKey"]
+                             ?? throw new InvalidOperationException("ChatClient:ApiKey must be set for the OpenAI provider. Use user-secrets, not appsettings.");
+                var openAiOptions = new OpenAI.OpenAIClientOptions();
+                if (builder.Configuration["ChatClient:Endpoint"] is { Length: > 0 } customEndpoint)
+                {
+                    openAiOptions.Endpoint = new Uri(customEndpoint);
+                }
+
+                chatClientDescription = $"OpenAI {model} at {openAiOptions.Endpoint?.ToString() ?? "api.openai.com"}";
+                builder.Services.AddSingleton<IChatClient>(
+                    new OpenAI.OpenAIClient(new System.ClientModel.ApiKeyCredential(apiKey), openAiOptions)
+                        .GetChatClient(model)
+                        .AsIChatClient());
+                break;
+
+            case "azureaiinference":
+                var azureEndpoint = builder.Configuration["ChatClient:Endpoint"]
+                                    ?? throw new InvalidOperationException("ChatClient:Endpoint must be set for the Azure AI Inference provider.");
+                var azureKey = builder.Configuration["ChatClient:ApiKey"]
+                               ?? throw new InvalidOperationException("ChatClient:ApiKey must be set for the Azure AI Inference provider.");
+
+                chatClientDescription = $"Azure AI Inference {model} at {azureEndpoint}";
+                builder.Services.AddSingleton<IChatClient>(
+                    new Azure.AI.Inference.ChatCompletionsClient(
+                            new Uri(azureEndpoint), new Azure.AzureKeyCredential(azureKey))
+                        .AsIChatClient(model));
+                break;
+
+            default:
+                throw new InvalidOperationException(
+                    $"Unknown ChatClient:Provider '{provider}'. Expected 'Ollama', 'OpenAI' or 'AzureAIInference'.");
+        }
+
+        builder.Services.AddSingleton<ILanguageModelService, ChatClientLanguageModelService>();
+        break;
+
     case "ollama":
         // Configure HttpClient for Ollama
         builder.Services.AddHttpClient("Ollama", client =>
@@ -236,6 +314,20 @@ logger.LogInformation("  TTS: {Service}", options.TtsServiceType ?? "Mock");
 logger.LogInformation("  Audio Device: {Service}", options.AudioDeviceServiceType ?? "Mock");
 logger.LogInformation("  Audio Playback: {Service}", options.AudioPlaybackServiceType ?? "Mock");
 
+// Log streaming configuration - if the selected LLM can't stream, time-to-first-audio
+// silently falls back to "wait for the whole answer", which is worth saying out loud.
+var streamingOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<StreamingResponseOptions>>().Value;
+var languageModel = app.Services.GetRequiredService<ILanguageModelService>();
+if (chatClientDescription is not null) logger.LogInformation("    Chat client: {Description}", chatClientDescription);
+logger.LogInformation("  Streaming responses: {Status}", streamingOptions.Enabled ? "Enabled" : "Disabled (filler phrases active)");
+if (streamingOptions.Enabled && !languageModel.SupportsStreaming)
+{
+    logger.LogWarning(
+        "    {Service} does not stream - the whole response will be generated before any audio plays. "
+        + "Set AIPanelist:LlmServiceType to 'ChatClient' for real streaming.",
+        languageModel.GetType().Name);
+}
+
 // Log response capture configuration
 var captureOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ResponseCaptureOptions>>().Value;
 logger.LogInformation("  Response Capture: {Status}", captureOptions.Enabled ? "Enabled" : "Disabled");
@@ -271,3 +363,39 @@ app.MapPanelistEndpoints();
 app.MapAudioDevicesEndpoints();
 
 app.Run();
+
+/// <summary>
+/// Pull a base URL out of the connection string Aspire injects for the Ollama resource.
+/// It arrives either as a bare URL or as "Endpoint=http://...;Model=...", depending on
+/// which hosting integration produced it.
+/// </summary>
+static string? ResolveAspireOllamaEndpoint(string? connectionString)
+{
+    if (string.IsNullOrWhiteSpace(connectionString)) return null;
+
+    return Uri.TryCreate(connectionString, UriKind.Absolute, out var direct)
+        ? direct.ToString()
+        : ReadConnectionStringValue(connectionString, "Endpoint");
+}
+
+/// <summary>
+/// Read one key out of a "Key=value;Key=value" connection string.
+/// </summary>
+static string? ReadConnectionStringValue(string? connectionString, string key)
+{
+    if (string.IsNullOrWhiteSpace(connectionString)) return null;
+
+    foreach (var part in connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries))
+    {
+        var separator = part.IndexOf('=');
+        if (separator <= 0) continue;
+
+        if (part[..separator].Trim().Equals(key, StringComparison.OrdinalIgnoreCase))
+        {
+            var value = part[(separator + 1)..].Trim();
+            if (value.Length > 0) return value;
+        }
+    }
+
+    return null;
+}

@@ -33,6 +33,13 @@ command -v espeak-ng >/dev/null || die "espeak-ng not installed. Install it, or 
 pactl list short sinks | awk '{print $2}' | grep -qx bubbles-tts-sink \
     || die "Audio graph is not up. Run ./bubbles-audio.sh up first."
 
+# A previous run still holding the port fails deep inside host startup, where the useful
+# error is buried under a stack trace. Catch it here instead.
+if ss -ltn 2>/dev/null | grep -q ":$PORT "; then
+    die "Port $PORT is already in use - a previous rehearse.sh is probably still running.
+       Stop it, or set BUBBLES_PORT to something else."
+fi
+
 echo "Rehearsal configuration:"
 echo "  STT   Whisper (real)"
 echo "  LLM   Mock (canned text - no Ollama required)"

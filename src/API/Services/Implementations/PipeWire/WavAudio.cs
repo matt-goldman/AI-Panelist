@@ -31,6 +31,40 @@ internal static class WavAudio
     }
 
     /// <summary>
+    /// Convert parsed audio to 16-bit signed PCM, which is what the gapless playback
+    /// streams accept. Most TTS backends already return 16-bit; float output (which
+    /// soundfile can produce depending on subtype) is converted rather than rejected.
+    /// </summary>
+    public static ReadOnlyMemory<byte> ToPcm16(WavData wav)
+    {
+        if (wav is { FormatTag: FormatPcm, Format.BitsPerSample: 16 })
+        {
+            return wav.Pcm;
+        }
+
+        var source = wav.Pcm.Span;
+
+        if (wav.FormatTag == FormatIeeeFloat && wav.Format.BitsPerSample == 32)
+        {
+            var sampleCount = source.Length / 4;
+            var converted = new byte[sampleCount * 2];
+
+            for (var i = 0; i < sampleCount; i++)
+            {
+                var sample = BitConverter.ToSingle(source.Slice(i * 4, 4));
+                var clamped = Math.Clamp(sample, -1f, 1f);
+                BinaryPrimitives.WriteInt16LittleEndian(
+                    converted.AsSpan(i * 2, 2), (short)(clamped * short.MaxValue));
+            }
+
+            return converted;
+        }
+
+        throw new NotSupportedException(
+            $"Cannot convert {wav.Format.BitsPerSample}-bit format {wav.FormatTag} to 16-bit PCM.");
+    }
+
+    /// <summary>
     /// Parse a WAV file held in memory.
     /// </summary>
     /// <exception cref="InvalidDataException">The bytes are not a WAV file we can play.</exception>

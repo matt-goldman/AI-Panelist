@@ -258,6 +258,60 @@ curl -X POST localhost:5141/api/devices/select/bubbles-tab-sink.monitor
 
 ---
 
+## 5a. Streamed responses and the LLM
+
+The metric that matters is **time-to-first-audio**, not total generation time. January's
+problem was the silence after the trigger, not the trigger itself.
+
+Instead of generating the whole answer, synthesising it, then playing it, the streamed path
+flushes to TTS at clause boundaries while the model is still writing, and queues chunk N+1
+while chunk N is still playing.
+
+```
+Time to first audio: 521ms (first chunk: "That's a fascinating point.")
+Streamed response complete: 4 chunks, first audio at 521ms, 19362ms total
+```
+
+Chunks are cut on punctuation, never on token count — a fixed-size split lands mid-phrase
+and Qwen3 renders bad prosody at the seam. The first chunk is kept short because it sets
+time-to-first-audio, but not so short that it comes out flat; later chunks are longer,
+since playback of the previous one is buying time.
+
+**Filler phrases are gone from this path, deliberately.** They existed to cover the gap
+between trigger and answer. The first real clause now fills that gap coherently, and a
+canned "Great question!" would collide with it. They are still there on the non-streamed
+path, which is what `StreamingResponse:Enabled: false` falls back to.
+
+### Choosing the model at runtime
+
+Set `AIPanelist:LlmServiceType` to `ChatClient` and pick a provider. This is the only path
+that streams; the older `Ollama` / `FoundryLocal` options still work but generate the whole
+response before any audio plays (startup logs a warning if you do that with streaming on).
+
+```json
+"AIPanelist": { "LlmServiceType": "ChatClient" },
+"ChatClient": {
+  "Provider": "Ollama",              // Ollama | OpenAI | AzureAIInference
+  "Model": "gpt-oss:20b",
+  "Endpoint": "http://localhost:11434"
+}
+```
+
+`OpenAI` also covers any OpenAI-compatible endpoint via `ChatClient:Endpoint`. Put
+`ChatClient:ApiKey` in user-secrets, never in appsettings:
+
+```bash
+cd src/API && dotnet user-secrets set "ChatClient:ApiKey" "sk-..."
+```
+
+**Reasoning models:** streaming reads only the answer channel. Microsoft.Extensions.AI
+surfaces reasoning as `TextReasoningContent`, separate from `TextContent`, so a model that
+thinks before answering doesn't gate time-to-first-audio on the whole thinking phase —
+whatever the provider. Reasoning tokens are counted and discarded; the log line at the end
+of a response tells you how many.
+
+---
+
 ## 6. TTS server
 
 Qwen3-TTS runs natively now. Create a venv next to `server.py`:
