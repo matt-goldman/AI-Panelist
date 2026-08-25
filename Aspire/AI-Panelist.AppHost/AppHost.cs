@@ -9,12 +9,14 @@ var builder = DistributedApplication.CreateBuilder(args);
 //    .AddDeployment("responses", "gpt-oss-20b-cuda-gpu", "1", "Microsoft");
 
 
-var ollama = builder
-    .AddOllama("ollama")
-    .WithDataVolume() // this is how you cache the model apparently
-    .WithGPUSupport();
+// Commented Ollama and run it natively. Easier now on Linux and more reliable access to GPU without container passthrough
 
-var responses = ollama.AddModel("responses", "gpt-oss:20b");
+// var ollama = builder
+//     .AddOllama("ollama")
+//     .WithDataVolume() // this is how you cache the model apparently
+//     .WithGPUSupport();
+//
+// var responses = ollama.AddModel("responses", "gpt-oss:20b");
 
 // TTS Server (Qwen3-TTS)
 // -----------------------
@@ -34,8 +36,12 @@ var tts = OperatingSystem.IsWindows()
     ? builder.AddExecutable("qwen-tts", "wsl", ".",
         "-d", builder.Configuration["QwenTts:WslDistro"] ?? "Ubuntu-22.04", "--", "bash", "-c",
         "source ~/qwentts/qwen-tts-venv/bin/activate && cd ~/qwentts && python server.py")
+    // Invoke the venv interpreter directly rather than sourcing activate. Activation
+    // scripts hard-code the absolute path the venv was created at, so renaming or moving
+    // the venv silently falls back to system Python - which has no torch, and fails deep
+    // inside server.py rather than at launch.
     : builder.AddExecutable("qwen-tts", "bash", ttsWorkingDirectory,
-        "-c", $"source {ttsVenvPath}/bin/activate && exec python server.py");
+        "-c", $"exec \"{ttsVenvPath}/bin/python\" server.py");
 
 tts = tts
     .WithHttpEndpoint(port: 8000, name: "http", isProxied: false)
@@ -56,12 +62,12 @@ if (!string.IsNullOrWhiteSpace(refText))
 }
 
 var api = builder.AddProject<Projects.API>("api")
-    .WithReference(responses)
-        .WaitFor(responses)
+    // .WithReference(responses)
+    //     .WaitFor(responses)
     .WaitFor(tts);
 
-builder.AddDevTunnel("devtunnel-public")
-    .WithAnonymousAccess()
-    .WithReference(api.GetEndpoint("https"));
+// builder.AddDevTunnel("devtunnel-public")
+//     .WithAnonymousAccess()
+//     .WithReference(api.GetEndpoint("https"));
 
 builder.Build().Run();

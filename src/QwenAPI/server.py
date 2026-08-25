@@ -47,10 +47,7 @@ TTS_REF_AUDIO = os.path.expanduser(
 # Transcript of the reference audio - MUST match the audio content
 TTS_REF_TEXT = os.environ.get(
     "TTS_REF_TEXT",
-    "Have you or your users ever accidentally deleted critical system information? "
-    "So of course there are edge cases to this. So with this area just a little bit "
-    "of effort can go a long way in making sure that the user can properly interpret "
-    "the data that you're trying to convey."
+    "g'day I'm Bubbles, the AI panelist. Thanks to the Beer Driven Devs for having me, I'm so excited to be here this evening."
 )
 
 # Global model reference

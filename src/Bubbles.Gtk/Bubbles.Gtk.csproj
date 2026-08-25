@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Linux/GTK4 build of the Bubbles display app.
+
+    This is a duplicate of src/Bubbles rather than another target framework on it, because
+    the GTK backend is a different shape of project entirely: a plain Microsoft.NET.Sdk
+    console-style Exe on `net10.0`, with no MAUI single-project support. That means no
+    <UseMaui>, no MauiImage/MauiFont/MauiAsset, and no XAML compilation - the UI here is
+    C# markup.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Bubbles.Gtk</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationId>com.beerdrivendevs.bubbles</ApplicationId>
+    <ApplicationTitle>Bubbles</ApplicationTitle>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Experimental MAUI GTK4 backend. Note the version: the sample in /scratch pins
+      0.6.0-*, which does not exist on nuget.org - only 0.1.0-preview.* is published.
+    -->
+    <PackageReference Include="Microsoft.Maui.Platforms.Linux.Gtk4" Version="0.1.0-preview.12.26421.1" />
+    <PackageReference Include="Microsoft.Maui.Platforms.Linux.Gtk4.Essentials" Version="0.1.0-preview.12.26421.1" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Shared\Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Plain content, since MauiImage needs the MAUI single-project SDK. -->
+    <None Include="..\Bubbles\Resources\Images\bdd_logo.png" Link="Assets\bdd_logo.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

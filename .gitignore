@@ -431,3 +431,5 @@ FodyWeavers.xsd
 # Captured response files (LLM text and TTS audio for post-production)
 **/captured-responses/
 /.idea/.idea.AI-Panelist/.idea
+
+scratch/
