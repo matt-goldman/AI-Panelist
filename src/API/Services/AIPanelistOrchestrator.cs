@@ -25,6 +25,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private readonly SelfSuppressionGate _suppressionGate;
     private readonly StreamingSpeechPipeline _streamingSpeech;
     private readonly StreamingResponseOptions _streamingOptions;
+    private readonly FallbackSpeechService _fallbackSpeech;
+    private readonly SilenceGuardOptions _silenceGuard;
     private readonly AIPanelistOptions _options;
 
     private Timer? _summaryTimer;
@@ -52,6 +54,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         SelfSuppressionGate suppressionGate,
         StreamingSpeechPipeline streamingSpeech,
         IOptions<StreamingResponseOptions> streamingOptions,
+        FallbackSpeechService fallbackSpeech,
+        IOptions<SilenceGuardOptions> silenceGuard,
         IOptions<AIPanelistOptions> options)
     {
         _logger = logger;
@@ -67,6 +71,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _suppressionGate = suppressionGate;
         _streamingSpeech = streamingSpeech;
         _streamingOptions = streamingOptions.Value;
+        _fallbackSpeech = fallbackSpeech;
+        _silenceGuard = silenceGuard.Value;
         _options = options.Value;
 
         // Subscribe to transcription events
@@ -90,6 +96,10 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             null,
             TimeSpan.FromSeconds(_options.SummaryIntervalSeconds),
             TimeSpan.FromSeconds(_options.SummaryIntervalSeconds));
+
+        // Get the fallback lines synthesised while nothing else needs the TTS. Not awaited:
+        // a slow or absent TTS mustn't hold up startup.
+        _ = Task.Run(() => _fallbackSpeech.WarmAsync(CancellationToken.None), CancellationToken.None);
 
         // Set initial state to Listening
         await SetStateAsync(AiPanelistState.Listening);
@@ -406,6 +416,18 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             _fillerCts?.Cancel();
             await _audioPlayback.StopAsync();
 
+            if (string.IsNullOrWhiteSpace(response))
+            {
+                _logger.LogError("Response was empty");
+                await SpeakFallbackAsync(() =>
+                {
+                    speaking = _suppressionGate.Suppress("fallback line");
+                    return SetStateAsync(AiPanelistState.Speaking);
+                }, cancellationToken);
+                await SetStateAsync(AiPanelistState.Listening);
+                return;
+            }
+
             // Speak the response - state changes to Speaking when audio playback actually starts
             _logger.LogInformation("Starting TTS synthesis...");
             await _ttsService.SpeakAsync(response, cancellationToken, () =>
@@ -429,6 +451,22 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error generating/speaking response");
+
+            // Whatever broke, someone asked a question. Recorded or cached audio doesn't
+            // need the TTS, so this usually works even when the TTS is what failed.
+            try
+            {
+                await SpeakFallbackAsync(() =>
+                {
+                    speaking ??= _suppressionGate.Suppress("fallback line");
+                    return SetStateAsync(AiPanelistState.Speaking);
+                }, cancellationToken);
+            }
+            catch (Exception fallbackEx)
+            {
+                _logger.LogError(fallbackEx, "Fallback line failed too");
+            }
+
             await SetStateAsync(AiPanelistState.Listening);
         }
         finally
@@ -464,14 +502,37 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
         _logger.LogInformation("Streaming response...");
 
-        var tokens = _llmService.StreamResponseAsync(summary, recentTranscript, cancellationToken);
-
-        var result = await _streamingSpeech.SpeakAsync(tokens, () =>
+        // Opened once, whether the first sound is the answer, a holding line or a
+        // fallback - a second scope would leave suppression open for good.
+        var speakingOpened = false;
+        Task OnFirstAudio()
         {
+            if (speakingOpened) return Task.CompletedTask;
+            speakingOpened = true;
+
             _logger.LogInformation("First audio, starting playback");
             onSpeakingScope(_suppressionGate.Suppress("streamed tts playback"));
             return SetStateAsync(AiPanelistState.Speaking);
-        }, cancellationToken);
+        }
+
+        // Turns "the model never answered" into a clean end of stream rather than an
+        // exception, so whatever was already queued still plays before the fallback line.
+        using var watchdog = new AnswerWatchdog(
+            _silenceGuard.Enabled ? TimeSpan.FromSeconds(_silenceGuard.MaxSilenceSeconds) : TimeSpan.Zero,
+            _logger);
+
+        var tokens = _silenceGuard.Enabled
+            ? watchdog.Watch(token => _llmService.StreamResponseAsync(summary, recentTranscript, token), cancellationToken)
+            : _llmService.StreamResponseAsync(summary, recentTranscript, cancellationToken);
+
+        var result = await _streamingSpeech.SpeakAsync(tokens, OnFirstAudio, cancellationToken);
+
+        if (watchdog.Failure is not null || result.ChunkCount == 0)
+        {
+            _logger.LogError("No answer after {Chunks} chunk(s) spoken: {Reason}",
+                result.ChunkCount, watchdog.Failure ?? "the stream produced nothing speakable");
+            await SpeakFallbackAsync(OnFirstAudio, cancellationToken);
+        }
 
         _logger.LogInformation("Response spoken in {Chunks} chunks: {Response}", result.ChunkCount, result.Text);
         _captureService.CaptureTextResponse(result.Text, summary);
@@ -481,6 +542,21 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _transcriptLog.Add(result.Text, DateTime.UtcNow, PanelTranscriptLog.BubblesSpeaker);
 
         await SetStateAsync(AiPanelistState.Listening);
+    }
+
+    /// <summary>
+    /// Say a canned line in place of an answer that never came. Silence is the one
+    /// unacceptable outcome: on stage it reads as Bubbles ignoring whoever asked.
+    /// </summary>
+    private async Task SpeakFallbackAsync(Func<Task> onFirstAudio, CancellationToken cancellationToken)
+    {
+        if (!_silenceGuard.Enabled)
+        {
+            _logger.LogWarning("Silence guard is off - saying nothing");
+            return;
+        }
+
+        await _fallbackSpeech.SpeakAsync(onFirstAudio, cancellationToken);
     }
 
     private async Task SetStateAsync(AiPanelistState newState)

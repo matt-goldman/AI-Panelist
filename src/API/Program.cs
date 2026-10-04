@@ -49,6 +49,15 @@ builder.Services.Configure<StreamingResponseOptions>(
 builder.Services.AddSingleton<ResponseChunker>();
 builder.Services.AddSingleton<StreamingSpeechPipeline>();
 
+// Never go silent: a canned line when a response produces nothing to say.
+builder.Services.Configure<SilenceGuardOptions>(
+    builder.Configuration.GetSection(SilenceGuardOptions.SectionName));
+builder.Services.AddSingleton<FallbackSpeechService>();
+
+// Answer off the cuff by default; think (behind a spoken holding line) only when asked to.
+builder.Services.Configure<ResponseTriageOptions>(
+    builder.Configuration.GetSection(ResponseTriageOptions.SectionName));
+
 // Register prompt service
 builder.Services.AddSingleton<PromptService>();
 
@@ -354,6 +363,20 @@ if (triggerOptions.Enabled)
     {
         logger.LogWarning("    Spoken triggers need SttServiceType 'Whisper' - nothing will be listening");
     }
+}
+
+var silenceGuard = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<SilenceGuardOptions>>().Value;
+logger.LogInformation("  Silence guard: {Status}", silenceGuard.Enabled
+    ? $"Enabled (fallback line after {silenceGuard.MaxSilenceSeconds}s without answer text, or on an empty answer)"
+    : "Disabled - an empty answer is silence");
+
+var triageOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<ResponseTriageOptions>>().Value;
+logger.LogInformation("  Response triage: {Status}", triageOptions.Enabled
+    ? $"Enabled (reasoning off unless the model asks; thinking pass budget {triageOptions.ThinkingMaxOutputTokens} tokens)"
+    : "Disabled (model's default reasoning on every response)");
+if (triageOptions.Enabled && (languageModel is not ChatClientLanguageModelService || !streamingOptions.Enabled))
+{
+    logger.LogWarning("    Triage needs LlmServiceType 'ChatClient' with streaming enabled - it won't run");
 }
 
 var searchOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<TranscriptSearchOptions>>().Value;

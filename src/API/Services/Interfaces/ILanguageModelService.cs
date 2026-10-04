@@ -44,3 +44,10 @@ public interface ILanguageModelService
     /// </summary>
     bool SupportsStreaming => false;
 }
+
+/// <summary>
+/// A response stream ended without any answer text — typically a reasoning model that
+/// spent its whole output budget thinking. Thrown at the end of the stream rather than
+/// returning quietly, so the caller can say something instead of going silent.
+/// </summary>
+public sealed class NoAnswerException(string message) : Exception(message);

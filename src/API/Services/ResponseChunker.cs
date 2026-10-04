@@ -20,6 +20,13 @@ public class ResponseChunker(IOptions<StreamingResponseOptions> options)
 {
     private readonly StreamingResponseOptions _options = options.Value;
 
+    /// <summary>
+    /// A token meaning "speak what you have now". Boundaries normally wait for the next
+    /// token to confirm them, which is fine mid-answer but not for a holding line followed
+    /// by a long silence while the model thinks. Never spoken, and never produced by a model.
+    /// </summary>
+    public const string Flush = "\0";
+
     private static readonly char[] SentenceEnders = ['.', '!', '?'];
     private static readonly char[] ClauseBreaks = [',', ';', ':', '—', '–'];
 
@@ -48,6 +55,21 @@ public class ResponseChunker(IOptions<StreamingResponseOptions> options)
         await foreach (var token in tokens.WithCancellation(cancellationToken))
         {
             if (string.IsNullOrEmpty(token)) continue;
+
+            if (token == Flush)
+            {
+                var flushed = buffer.ToString().Trim();
+                buffer.Clear();
+
+                if (flushed.Length > 0)
+                {
+                    isFirstChunk = false;
+                    yield return flushed;
+                }
+
+                continue;
+            }
+
             buffer.Append(token);
 
             // One token can complete more than one boundary.
