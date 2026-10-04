@@ -52,6 +52,18 @@ builder.Services.AddSingleton<StreamingSpeechPipeline>();
 // Register prompt service
 builder.Services.AddSingleton<PromptService>();
 
+// Spoken trigger phrases. The matcher is always registered; the Whisper worker that feeds
+// it only runs when TriggerPhrases:Enabled is true.
+builder.Services.Configure<TriggerPhraseOptions>(
+    builder.Configuration.GetSection(TriggerPhraseOptions.SectionName));
+builder.Services.AddSingleton<TriggerPhraseMatcher>();
+
+// The whole session's transcript, kept for searching. Recorded regardless; only offered
+// to the model as a tool when TranscriptSearch:Enabled is true.
+builder.Services.Configure<TranscriptSearchOptions>(
+    builder.Configuration.GetSection(TranscriptSearchOptions.SectionName));
+builder.Services.AddSingleton<PanelTranscriptLog>();
+
 // Register transcript buffer service
 builder.Services.AddSingleton(sp =>
 {
@@ -325,6 +337,30 @@ if (streamingOptions.Enabled && !languageModel.SupportsStreaming)
     logger.LogWarning(
         "    {Service} does not stream - the whole response will be generated before any audio plays. "
         + "Set AIPanelist:LlmServiceType to 'ChatClient' for real streaming.",
+        languageModel.GetType().Name);
+}
+
+// Log spoken triggers and transcript search - both are toggles worth seeing at a glance.
+var triggerOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<TriggerPhraseOptions>>().Value;
+logger.LogInformation("  Spoken triggers: {Status}", triggerOptions.Enabled ? "Enabled" : "Disabled (button only)");
+if (triggerOptions.Enabled)
+{
+    foreach (var phrase in app.Services.GetRequiredService<TriggerPhraseMatcher>().Phrases)
+    {
+        logger.LogInformation("    - \"{Phrase}\"", phrase);
+    }
+
+    if (!string.Equals(options.SttServiceType, "whisper", StringComparison.OrdinalIgnoreCase))
+    {
+        logger.LogWarning("    Spoken triggers need SttServiceType 'Whisper' - nothing will be listening");
+    }
+}
+
+var searchOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<TranscriptSearchOptions>>().Value;
+logger.LogInformation("  Transcript search tool: {Status}", searchOptions.Enabled ? "Enabled" : "Disabled");
+if (searchOptions.Enabled && languageModel is not ChatClientLanguageModelService)
+{
+    logger.LogWarning("    {Service} can't call tools - set AIPanelist:LlmServiceType to 'ChatClient' to use transcript search",
         languageModel.GetType().Name);
 }
 

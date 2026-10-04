@@ -23,6 +23,8 @@ public class WhisperSpeechToTextService(
     SelfSuppressionGate suppressionGate,
     IOptions<SelfSuppressionOptions> suppressionOptions,
     IOptions<TranscriptionOptions> transcriptionOptions,
+    IOptions<TriggerPhraseOptions> triggerOptions,
+    TriggerPhraseMatcher triggerMatcher,
     IConfiguration configuration) : ISpeechToTextService, IDisposable
 {
     private readonly ILogger<WhisperSpeechToTextService> _logger = logger;
@@ -77,7 +79,8 @@ public class WhisperSpeechToTextService(
             {
                 var capture = new DeviceCapture(
                     device, captureFactory, _whisperFactory, suppressionGate,
-                    suppressionOptions.Value, transcriptionOptions.Value, _logger);
+                    suppressionOptions.Value, transcriptionOptions.Value, _logger,
+                    CreateTriggerListener(device));
                 capture.TranscriptionReceived += OnDeviceTranscriptionReceived;
                 _deviceCaptures.Add(capture);
 
@@ -134,6 +137,30 @@ public class WhisperSpeechToTextService(
         _manualSuppression?.Dispose();
         _manualSuppression = null;
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// A trigger phrase listener for this device, if spoken triggers are on and the
+    /// device is one we listen to.
+    /// </summary>
+    private TriggerPhraseListener? CreateTriggerListener(AudioDeviceInfo device)
+    {
+        var options = triggerOptions.Value;
+        if (!options.Enabled) return null;
+
+        if (options.Devices.Count > 0
+            && !options.Devices.Any(d => string.Equals(d, device.EffectiveName, StringComparison.OrdinalIgnoreCase)
+                                         || string.Equals(d, device.Name, StringComparison.OrdinalIgnoreCase)
+                                         || string.Equals(d, device.Id, StringComparison.OrdinalIgnoreCase)))
+        {
+            _logger.LogInformation("Not listening for trigger phrases on {DeviceName} - not in TriggerPhrases:Devices",
+                device.EffectiveName);
+            return null;
+        }
+
+        return new TriggerPhraseListener(
+            device, _whisperFactory!, suppressionGate, triggerMatcher,
+            options, transcriptionOptions.Value, _logger);
     }
 
     private async Task<string> EnsureWhisperModelAsync()
@@ -203,7 +230,8 @@ public class WhisperSpeechToTextService(
         SelfSuppressionGate suppressionGate,
         SelfSuppressionOptions suppressionOptions,
         TranscriptionOptions transcriptionOptions,
-        ILogger logger) : IDisposable
+        ILogger logger,
+        TriggerPhraseListener? triggerListener) : IDisposable
     {
         private const int SegmentSamples = IAudioCaptureFactory.SampleRate * 10; // 10 seconds
 
@@ -230,6 +258,8 @@ public class WhisperSpeechToTextService(
             _capture.SamplesAvailable += OnSamplesAvailable;
             await _capture.StartAsync(cancellationToken);
 
+            triggerListener?.Start(cancellationToken);
+
             // Start transcription loop for this device
             _transcriptionTask = Task.Run(() => TranscriptionLoopAsync(cancellationToken), cancellationToken);
         }
@@ -255,6 +285,11 @@ public class WhisperSpeechToTextService(
                     // Expected
                 }
             }
+
+            if (triggerListener is not null)
+            {
+                await triggerListener.StopAsync();
+            }
         }
 
         private void OnSamplesAvailable(object? sender, AudioSamplesEventArgs e)
@@ -264,11 +299,15 @@ public class WhisperSpeechToTextService(
             var endUtc = DateTime.UtcNow;
             var duration = TimeSpan.FromSeconds(e.Samples.Length / (double)IAudioCaptureFactory.SampleRate);
 
+            var block = new AudioBlock(endUtc - duration, endUtc, e.Samples);
+
             lock (_bufferLock)
             {
-                _blocks.Enqueue(new AudioBlock(endUtc - duration, endUtc, e.Samples));
+                _blocks.Enqueue(block);
                 _bufferedSamples += e.Samples.Length;
             }
+
+            triggerListener?.Add(block);
         }
 
         private async Task TranscriptionLoopAsync(CancellationToken cancellationToken)
@@ -390,6 +429,7 @@ public class WhisperSpeechToTextService(
         {
             _capture?.Dispose();
             _processor?.Dispose();
+            triggerListener?.Dispose();
         }
     }
 }

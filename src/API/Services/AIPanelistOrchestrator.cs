@@ -19,6 +19,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private readonly ITextToSpeechService _ttsService;
     private readonly IAudioPlaybackService _audioPlayback;
     private readonly TranscriptBufferService _transcriptBuffer;
+    private readonly PanelTranscriptLog _transcriptLog;
+    private readonly TriggerPhraseMatcher _triggerMatcher;
     private readonly ResponseCaptureService _captureService;
     private readonly SelfSuppressionGate _suppressionGate;
     private readonly StreamingSpeechPipeline _streamingSpeech;
@@ -44,6 +46,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         ITextToSpeechService ttsService,
         IAudioPlaybackService audioPlayback,
         TranscriptBufferService transcriptBuffer,
+        PanelTranscriptLog transcriptLog,
+        TriggerPhraseMatcher triggerMatcher,
         ResponseCaptureService captureService,
         SelfSuppressionGate suppressionGate,
         StreamingSpeechPipeline streamingSpeech,
@@ -57,6 +61,8 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _ttsService = ttsService;
         _audioPlayback = audioPlayback;
         _transcriptBuffer = transcriptBuffer;
+        _transcriptLog = transcriptLog;
+        _triggerMatcher = triggerMatcher;
         _captureService = captureService;
         _suppressionGate = suppressionGate;
         _streamingSpeech = streamingSpeech;
@@ -65,6 +71,10 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
         // Subscribe to transcription events
         _sttService.TranscriptionReceived += OnTranscriptionReceived;
+
+        // A spoken trigger is the same act as the moderator pressing the button, and goes
+        // through the same guards (disabled, already answering).
+        _triggerMatcher.TriggerDetected += OnTriggerPhraseDetected;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -257,9 +267,23 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         {
             _logger.LogDebug("Transcription received from {Speaker}: {Text}", e.SpeakerName ?? "Unknown", e.Text);
             _transcriptBuffer.AddEntry(e.Text, e.Timestamp, e.SpeakerName);
+            _transcriptLog.Add(e.Text, e.Timestamp, e.SpeakerName);
 
             // Broadcast updated transcript
             _ = BroadcastConversationStateAsync();
+        }
+    }
+
+    private async void OnTriggerPhraseDetected(object? sender, TriggerPhraseDetectedEventArgs e)
+    {
+        try
+        {
+            _logger.LogInformation("Spoken trigger from {Source}, triggering response", e.Source ?? "unknown");
+            await TriggerResponseAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error handling spoken trigger");
         }
     }
 
@@ -374,6 +398,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
             // Capture the response asynchronously (non-blocking)
             _captureService.CaptureTextResponse(response, summary);
+            _transcriptLog.Add(response, DateTime.UtcNow, PanelTranscriptLog.BubblesSpeaker);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -451,6 +476,10 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _logger.LogInformation("Response spoken in {Chunks} chunks: {Response}", result.ChunkCount, result.Text);
         _captureService.CaptureTextResponse(result.Text, summary);
 
+        // Self-suppression keeps Bubbles' voice out of the transcript, so this is the only
+        // way "what did you say earlier, Bubbles?" can be answered.
+        _transcriptLog.Add(result.Text, DateTime.UtcNow, PanelTranscriptLog.BubblesSpeaker);
+
         await SetStateAsync(AiPanelistState.Listening);
     }
 
@@ -484,6 +513,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
     public void Dispose()
     {
+        _triggerMatcher.TriggerDetected -= OnTriggerPhraseDetected;
         _summaryTimer?.Dispose();
         _responseCts?.Dispose();
         _fillerCts?.Dispose();

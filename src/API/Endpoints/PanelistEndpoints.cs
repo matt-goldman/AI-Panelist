@@ -1,4 +1,6 @@
+using API.Configuration;
 using API.Services;
+using Microsoft.Extensions.Options;
 
 namespace API.Endpoints;
 
@@ -30,6 +32,10 @@ public static class PanelistEndpoints
         group.MapPost("/enable", EnableAsync)
             .WithName("EnablePanelist")
             .WithSummary("Re-enable the AI panelist");
+
+        group.MapGet("/transcript/search", SearchTranscript)
+            .WithName("SearchTranscript")
+            .WithSummary("Run the same transcript search the model's tool runs, to see what it would find and why");
 
         return app;
     }
@@ -68,6 +74,23 @@ public static class PanelistEndpoints
         logger.LogInformation("Enable endpoint called");
         await orchestrator.EnableAsync();
         return Results.Ok(new { message = "Panelist enabled" });
+    }
+
+    private static IResult SearchTranscript(
+        string q,
+        PanelTranscriptLog transcriptLog,
+        IOptions<TranscriptSearchOptions> options)
+    {
+        var terms = PanelTranscriptLog.Terms(q);
+        var hits = transcriptLog.Search(q, options.Value.MaxResults, options.Value.ContextEntries);
+
+        return Results.Ok(new
+        {
+            terms,
+            entries = transcriptLog.Count,
+            hits,
+            asSeenByModel = PanelTranscriptLog.Format(terms, hits, DateTime.UtcNow)
+        });
     }
 }
 
