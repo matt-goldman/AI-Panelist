@@ -21,6 +21,12 @@ public class ConversationStateService()
     public State<ConversationState> ConversationState = new(new ConversationState(string.Empty, string.Empty, false, false));
 
     /// <summary>
+    /// Loudness of the audio Bubbles is playing, replayed on this device's clock. Sampled
+    /// from a render loop rather than subscribed to - see <see cref="SpeechEnvelopeTimeline"/>.
+    /// </summary>
+    public SpeechEnvelopeTimeline Mouth = new();
+
+    /// <summary>
     /// Event raised when connection state changes
     /// </summary>
     public event EventHandler<bool>? ConnectionStateChanged;
@@ -189,6 +195,10 @@ public class ConversationStateService()
         _hubConnection.On<string>(Shared.Messages.SetThinkingStateAnimation, stateName => ThinkingStateAnimation.SetValue(stateName));
 
         _hubConnection.On<string>(Shared.Messages.SetSpeakingStateAnimation, stateName => SpeakingStateAnimation.SetValue(stateName));
+
+        _hubConnection.On<SpeechEnvelope>(Shared.Messages.SpeechEnvelope, envelope => Mouth.Add(envelope));
+
+        _hubConnection.On(Shared.Messages.SpeechComplete, () => Mouth.Complete());
 
         _currentHubAddress = hubAddress;
         Preferences.Set("API", hubAddress);

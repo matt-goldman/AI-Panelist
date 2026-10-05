@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Bubbles Setup</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+    <h1>Bubbles</h1>
+    <div class="badges">
+        <div id="displays" class="state state-unknown" title="Displays connected to the hub">
+            <span id="displays-text">— displays</span>
+        </div>
+        <div id="state" class="state state-unknown">
+            <span class="dot"></span><span id="state-text">connecting…</span>
+        </div>
+    </div>
+</header>
+
+<nav id="tabs">
+    <button class="tab active" data-panel="checks">Checks</button>
+    <button class="tab" data-panel="inputs">Inputs</button>
+    <button class="tab" data-panel="control">Control</button>
+    <button class="tab" data-panel="run">This run</button>
+</nav>
+
+<main>
+    <section id="panel-checks" class="panel active">
+        <div class="row">
+            <button id="run-checks" class="primary">Run checks</button>
+            <span id="checks-summary" class="muted">Not run yet.</span>
+        </div>
+        <p class="muted small">
+            Probing the model and the TTS also warms them, so this is worth running even
+            when you expect it all to pass.
+        </p>
+        <ul id="checks" class="checks"></ul>
+
+        <div class="test-speech">
+            <h2>The check nothing can do for you</h2>
+            <p class="muted small">
+                Everything above can be proved by software. Whether the sound comes out of
+                the right place, and whether the mouth on the display moves with it, has to
+                be seen and heard. Stand where you can see the display, then press this.
+            </p>
+            <input id="test-text" type="text" aria-label="What Bubbles should say"
+                   placeholder="Leave blank for the standard test line">
+            <button id="test-speech" class="primary big">Say something and watch the display</button>
+            <p id="test-result" class="muted small"></p>
+        </div>
+    </section>
+
+    <section id="panel-inputs" class="panel">
+        <p class="muted small">
+            Talk into each microphone in turn and watch which meter moves — that is how you
+            tell which channel is whose. The name you set here is the name that appears in
+            the transcript.
+        </p>
+        <div class="row">
+            <button id="refresh-devices">Refresh device list</button>
+            <button id="save-selection" class="primary">Use the ticked devices for capture</button>
+        </div>
+        <ul id="devices" class="devices"></ul>
+    </section>
+
+    <section id="panel-control" class="panel">
+        <p class="muted small">
+            The trigger of record, and the silent fallback when a spoken trigger does not
+            land. Works from a phone on the same network.
+        </p>
+        <div class="controls">
+            <button id="trigger" class="primary big">Trigger a response</button>
+            <button id="cancel" class="danger">Cancel</button>
+            <button id="introduce">Play the introduction</button>
+            <button id="enable">Enable</button>
+            <button id="disable" class="danger">Disable</button>
+        </div>
+        <pre id="control-log" class="log"></pre>
+    </section>
+
+    <section id="panel-run" class="panel">
+        <div id="summary"></div>
+    </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

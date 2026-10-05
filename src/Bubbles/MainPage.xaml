@@ -17,6 +17,18 @@
                            HeightRequest="650"
                            RepeatCount="-1" />
 
+        <!--
+            The mouth, driven by the loudness of the audio being played. Hidden unless the
+            speaking animation is set to "meter": by default the Lottie artwork stays and
+            pulses with the voice instead. Same drawing as the GTK display.
+        -->
+        <GraphicsView x:Name="MouthView"
+                      IsVisible="False"
+                      HorizontalOptions="Center"
+                      VerticalOptions="Center"
+                      WidthRequest="650"
+                      HeightRequest="650" />
+
         <Image Margin="20"
                Source="bdd_logo.png"
                WidthRequest="400"

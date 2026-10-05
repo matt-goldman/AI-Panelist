@@ -1,3 +1,4 @@
+using Bubbles.Visuals;
 using Shared;
 
 namespace Bubbles.Gtk.Drawing;
@@ -32,6 +33,25 @@ public sealed class BubblesScene : IDrawable
     public AiPanelistState State { get; set; } = AiPanelistState.Idle;
     public bool Connected { get; set; }
     public string StatusMessage { get; set; } = string.Empty;
+
+    /// <summary>
+    /// How wide the mouth is, 0 to 1, from the audio actually being played. See
+    /// <see cref="SpeechEnvelope"/>.
+    /// </summary>
+    public float Level { get; set; }
+
+    /// <summary>
+    /// Whether <see cref="Level"/> is coming from real audio. False means the API isn't
+    /// publishing envelopes - an older build, or the feature switched off - and the
+    /// speaking animation falls back to the shaped-to-look-like-speech version.
+    /// </summary>
+    public bool HasLevel { get; set; }
+
+    /// <summary>
+    /// In the seam between two chunks. Audio is still coming, so the mouth shows "still
+    /// going" rather than closing.
+    /// </summary>
+    public bool Bridging { get; set; }
 
     /// <summary>
     /// Advance the simulation. Called from the UI timer, not from Draw, so the animation
@@ -224,34 +244,11 @@ public sealed class BubblesScene : IDrawable
     }
 
     /// <summary>
-    /// A symmetric bar meter. Not driven by real audio - the app knows it is speaking,
-    /// not how loud - so the bars are shaped to look like speech rather than fake a level.
+    /// The mouth, drawn by the shared <see cref="MouthMeter"/> so this display and the
+    /// MAUI one cannot drift apart.
     /// </summary>
     private void DrawSpeaking(ICanvas canvas, PointF centre, float scale)
-    {
-        const int bars = 9;
-        var barWidth = scale * 0.028f;
-        var gap = barWidth * 0.9f;
-        var totalWidth = bars * barWidth + (bars - 1) * gap;
-        var left = centre.X - totalWidth / 2f;
-        var maxHeight = scale * 0.30f;
-
-        canvas.FillColor = Ink.WithAlpha(0.85f);
-
-        for (var i = 0; i < bars; i++)
-        {
-            // Two detuned sines per bar so the pattern doesn't visibly repeat.
-            var t = (float)_elapsed * 6f + i * 0.7f;
-            var amplitude = 0.35f + 0.65f * MathF.Abs(MathF.Sin(t) * 0.6f + MathF.Sin(t * 0.37f) * 0.4f);
-
-            // Taller in the middle, like a mouth.
-            var falloff = 1f - MathF.Abs(i - (bars - 1) / 2f) / bars;
-            var height = maxHeight * amplitude * (0.45f + falloff * 0.55f);
-
-            var x = left + i * (barWidth + gap);
-            canvas.FillRoundedRectangle(x, centre.Y - height / 2f, barWidth, height, barWidth / 2f);
-        }
-    }
+        => MouthMeter.Draw(canvas, centre, scale, Ink.WithAlpha(0.85f), Level, HasLevel, Bridging, _elapsed);
 
     private void DrawStatus(ICanvas canvas, RectF rect)
     {

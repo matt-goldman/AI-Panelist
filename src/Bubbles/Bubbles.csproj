@@ -66,6 +66,7 @@
 
 	<ItemGroup>
 	  <ProjectReference Include="..\UI\UI-Common\UI-Common.csproj" />
+	  <ProjectReference Include="..\UI\Bubbles.Visuals\Bubbles.Visuals.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

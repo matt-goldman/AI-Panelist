@@ -21,6 +21,13 @@ public class BubblesConnection(ILogger<BubblesConnection> logger) : IAsyncDispos
     private CancellationTokenSource? _cts;
 
     public State<AiPanelistState> PanelistState { get; } = new(AiPanelistState.Idle);
+
+    /// <summary>
+    /// Loudness of the audio being played, replayed on this machine's clock. Sampled by the
+    /// render loop rather than pushed, so it stays smooth between messages.
+    /// </summary>
+    public SpeechEnvelopeTimeline Mouth { get; } = new();
+
     public State<string> CustomState { get; } = new(string.Empty);
     public State<bool> IsConnected { get; } = new(false);
 
@@ -87,10 +94,16 @@ public class BubblesConnection(ILogger<BubblesConnection> logger) : IAsyncDispos
 
             connection.On<AiPanelistState>(Messages.UpdatePanelState, state => PanelistState.SetValue(state));
             connection.On<string>(Messages.TestCustomState, name => CustomState.SetValue(name));
+            connection.On<SpeechEnvelope>(Messages.SpeechEnvelope, envelope => Mouth.Add(envelope));
+            connection.On(Messages.SpeechComplete, () => Mouth.Complete());
 
             connection.Reconnecting += _ =>
             {
                 IsConnected.SetValue(false);
+
+                // Whatever was being said, we have stopped hearing about it. A mouth frozen
+                // mid-word is worse than a closed one.
+                Mouth.Reset();
                 return Task.CompletedTask;
             };
 
@@ -103,6 +116,7 @@ public class BubblesConnection(ILogger<BubblesConnection> logger) : IAsyncDispos
             connection.Closed += async error =>
             {
                 IsConnected.SetValue(false);
+                Mouth.Reset();
                 // Automatic reconnect has given up; fall back to the outer retry loop.
                 await Task.Delay(2000, CancellationToken.None);
                 if (_cts is { IsCancellationRequested: false })

@@ -4,6 +4,7 @@ using API.Hubs;
 using API.Services;
 using API.Services.Implementations;
 using API.Services.Implementations.PipeWire;
+using API.Services.Setup;
 using API.Services.Interfaces;
 using Microsoft.Extensions.AI;
 
@@ -48,6 +49,25 @@ builder.Services.Configure<StreamingResponseOptions>(
     builder.Configuration.GetSection(StreamingResponseOptions.SectionName));
 builder.Services.AddSingleton<ResponseChunker>();
 builder.Services.AddSingleton<StreamingSpeechPipeline>();
+
+// Live input level per capture device. Measured on the capture thread, and the answer to
+// both "is this node carrying anything?" and "which panelist is on which mic?".
+builder.Services.AddSingleton<CaptureLevelMonitor>();
+
+// Which displays are attached to the hub, so "is the tablet connected?" has an answer that
+// doesn't involve walking over to look at it.
+builder.Services.AddSingleton<DisplayRegistry>();
+
+// The setup app at /setup: pre-flight checks, input meters, and the fixes it may apply.
+builder.Services.Configure<SetupOptions>(
+    builder.Configuration.GetSection(SetupOptions.SectionName));
+builder.Services.AddSingleton<SetupActions>();
+builder.Services.AddSingleton<ReadinessService>();
+
+// Publish how loud Bubbles' speech is, so a display can drive a mouth from the real audio.
+builder.Services.Configure<SpeechEnvelopeOptions>(
+    builder.Configuration.GetSection(SpeechEnvelopeOptions.SectionName));
+builder.Services.AddSingleton<SpeechEnvelopePublisher>();
 
 // Never go silent: a canned line when a response produces nothing to say.
 builder.Services.Configure<SilenceGuardOptions>(
@@ -365,6 +385,11 @@ if (triggerOptions.Enabled)
     }
 }
 
+var envelopeOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<SpeechEnvelopeOptions>>().Value;
+logger.LogInformation("  Speech envelope: {Status}", envelopeOptions.Enabled
+    ? $"Enabled ({envelopeOptions.FrameMs}ms frames, {envelopeOptions.OutputLatencyMs}ms output latency allowance)"
+    : "Disabled (displays keep their canned speaking animation)");
+
 var silenceGuard = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<SilenceGuardOptions>>().Value;
 logger.LogInformation("  Silence guard: {Status}", silenceGuard.Enabled
     ? $"Enabled (fallback line after {silenceGuard.MaxSilenceSeconds}s without answer text, or on an empty answer)"
@@ -420,6 +445,12 @@ app.MapHub<BubblesHub>("/bubbles");
 // Map minimal API endpoints
 app.MapPanelistEndpoints();
 app.MapAudioDevicesEndpoints();
+app.MapSetupEndpoints();
+
+// The setup app is static files, so it needs no build step of its own and stays usable
+// from the machine being set up and from a phone on the same network.
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 app.Run();
 

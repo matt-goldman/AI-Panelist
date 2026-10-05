@@ -29,6 +29,7 @@ public class StreamingSpeechPipeline(
     ITextToSpeechService tts,
     IAudioPlaybackService playback,
     ResponseChunker chunker,
+    SpeechEnvelopePublisher envelopes,
     IOptions<StreamingResponseOptions> options)
 {
     private readonly StreamingResponseOptions _options = options.Value;
@@ -48,6 +49,7 @@ public class StreamingSpeechPipeline(
     {
         var stopwatch = Stopwatch.StartNew();
         var spoken = new StringBuilder();
+        envelopes.Begin();
         var timeToFirstAudio = TimeSpan.Zero;
         var chunkCount = 0;
 
@@ -101,15 +103,27 @@ public class StreamingSpeechPipeline(
 
                     stream = await playback.OpenStreamAsync(wav.Format, cancellationToken);
                     streamFormat = wav.Format;
+
+                    // A new stream restarts the clock the envelope schedule is measured from.
+                    envelopes.Begin();
                 }
 
                 await stream.WriteAsync(pcm, cancellationToken);
+
+                // Measured from the PCM actually queued, so the display's mouth is driven
+                // by the same bytes the audience hears.
+                envelopes.Publish(pcm, wav.Format);
 
                 spoken.Append(spoken.Length > 0 ? " " : string.Empty).Append(chunk.Text);
                 chunkCount++;
             }
 
             await producer;
+
+            // Before the drain, not after: the envelope already says when the last frame
+            // is heard, and the drain is just the output buffer emptying. Published late,
+            // the display would sit in its between-chunks bridge after the audio had ended.
+            envelopes.Complete();
 
             if (stream is not null)
             {
@@ -120,6 +134,10 @@ public class StreamingSpeechPipeline(
         catch (OperationCanceledException)
         {
             logger.LogInformation("Streamed response cancelled after {Count} chunk(s)", chunkCount);
+
+            // A cancelled response has stopped making noise, so the mouth must stop too
+            // rather than holding its last shape.
+            envelopes.Complete();
             throw;
         }
         finally

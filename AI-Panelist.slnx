@@ -12,6 +12,7 @@
   <Folder Name="/src/UI/">
     <Project Path="src/Bubbles/Bubbles.csproj" />
     <Project Path="src/Bubbles.Gtk/Bubbles.Gtk.csproj" />
+    <Project Path="src/UI/Bubbles.Visuals/Bubbles.Visuals.csproj" />
     <Project Path="src/ModeratorApp/ModeratorApp.csproj" />
     <Project Path="src/UI/UI-Common/UI-Common.csproj" Id="9bfb93f7-b140-4583-bf15-a4c73000be26" />
   </Folder>

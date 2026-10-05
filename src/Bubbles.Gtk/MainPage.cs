@@ -23,6 +23,13 @@ public class MainPage : ContentPage
     private IDispatcherTimer? _timer;
     private DateTime _lastFrame = DateTime.UtcNow;
 
+    /// <summary>
+    /// Whether this response has produced any envelope at all. Without it the display
+    /// would flick to the canned animation for a frame or two at the end of every answer,
+    /// as the timeline runs out before the state leaves Speaking.
+    /// </summary>
+    private bool _sawEnvelope;
+
     public MainPage(BubblesConnection connection)
     {
         _connection = connection;
@@ -53,7 +60,11 @@ public class MainPage : ContentPage
 
         // SignalR callbacks arrive on a background thread.
         _connection.PanelistState.Subscribe(state =>
-            _dispatcher.Dispatch(() => _scene.State = state));
+            _dispatcher.Dispatch(() =>
+            {
+                if (state != AiPanelistState.Speaking) _sawEnvelope = false;
+                _scene.State = state;
+            }));
 
         _connection.IsConnected.Subscribe(connected =>
             _dispatcher.Dispatch(() =>
@@ -105,6 +116,14 @@ public class MainPage : ContentPage
 
         // Clamp so a stalled frame doesn't teleport every bubble off the top.
         _scene.Advance(Math.Min(delta, 0.1));
+
+        var mouth = _connection.Mouth.Sample(now);
+        if (mouth.Speaking) _sawEnvelope = true;
+
+        _scene.Level = mouth.Level;
+        _scene.Bridging = mouth.Bridging;
+        _scene.HasLevel = _sawEnvelope;
+
         _canvas.Invalidate();
     }
 }

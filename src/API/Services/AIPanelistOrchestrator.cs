@@ -83,6 +83,16 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _triggerMatcher.TriggerDetected += OnTriggerPhraseDetected;
     }
 
+    /// <summary>
+    /// What Bubbles is doing, for anything that polls rather than listening on the hub —
+    /// the setup app, which deliberately has no SignalR client so it needs no scripts from
+    /// a CDN at a venue with no internet.
+    /// </summary>
+    public AiPanelistState CurrentState => _currentState;
+
+    /// <summary>Whether the panelist has been switched off.</summary>
+    public bool IsDisabled => _isDisabled;
+
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting AI Panelist Orchestrator");
@@ -197,6 +207,77 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         finally
         {
             _stateLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Speak a fixed line through the whole response path — TTS, chunking, playback,
+    /// envelope publishing, self-suppression — with only the model left out.
+    ///
+    /// This is the end-to-end check that cannot be done by inspecting anything: if the
+    /// line comes out of the right sink and the mouth moves on the display, the parts
+    /// between them are all working. It is the one thing the readiness checks cannot
+    /// prove on their own.
+    /// </summary>
+    /// <returns>Why it couldn't be spoken, or null if it was.</returns>
+    public async Task<string?> SpeakTestLineAsync(string text, CancellationToken cancellationToken)
+    {
+        await _stateLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_isDisabled) return "The panelist is disabled.";
+            if (_currentState is AiPanelistState.Thinking or AiPanelistState.Speaking) return "Already speaking.";
+
+            _responseCts?.Cancel();
+            _responseCts = new CancellationTokenSource();
+        }
+        finally
+        {
+            _stateLock.Release();
+        }
+
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(_responseCts.Token, cancellationToken);
+        IDisposable? speaking = null;
+        _isResponseInProgress = true;
+
+        try
+        {
+            _logger.LogInformation("Speaking test line: {Text}", text);
+
+            var result = await _streamingSpeech.SpeakAsync(
+                Single(text),
+                () =>
+                {
+                    speaking = _suppressionGate.Suppress("test line");
+                    return SetStateAsync(AiPanelistState.Speaking);
+                },
+                linked.Token);
+
+            await SetStateAsync(AiPanelistState.Listening);
+
+            return result.ChunkCount > 0 ? null : "The text to speech produced no audio.";
+        }
+        catch (OperationCanceledException)
+        {
+            await SetStateAsync(AiPanelistState.Listening);
+            return "Cancelled.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Test line failed");
+            await SetStateAsync(AiPanelistState.Listening);
+            return ex.Message;
+        }
+        finally
+        {
+            speaking?.Dispose();
+            _isResponseInProgress = false;
+        }
+
+        static async IAsyncEnumerable<string> Single(string text)
+        {
+            yield return text;
+            await Task.CompletedTask;
         }
     }
 

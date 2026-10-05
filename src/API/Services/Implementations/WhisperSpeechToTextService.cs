@@ -25,6 +25,7 @@ public class WhisperSpeechToTextService(
     IOptions<TranscriptionOptions> transcriptionOptions,
     IOptions<TriggerPhraseOptions> triggerOptions,
     TriggerPhraseMatcher triggerMatcher,
+    CaptureLevelMonitor levelMonitor,
     IConfiguration configuration) : ISpeechToTextService, IDisposable
 {
     private readonly ILogger<WhisperSpeechToTextService> _logger = logger;
@@ -80,7 +81,7 @@ public class WhisperSpeechToTextService(
                 var capture = new DeviceCapture(
                     device, captureFactory, _whisperFactory, suppressionGate,
                     suppressionOptions.Value, transcriptionOptions.Value, _logger,
-                    CreateTriggerListener(device));
+                    CreateTriggerListener(device), levelMonitor);
                 capture.TranscriptionReceived += OnDeviceTranscriptionReceived;
                 _deviceCaptures.Add(capture);
 
@@ -120,6 +121,10 @@ public class WhisperSpeechToTextService(
             capture.Dispose();
         }
         _deviceCaptures.Clear();
+
+        // A level meter left showing the last reading from a device no longer being
+        // captured is worse than an empty one.
+        levelMonitor.Clear();
 
         _logger.LogInformation("Whisper transcription stopped");
     }
@@ -231,7 +236,8 @@ public class WhisperSpeechToTextService(
         SelfSuppressionOptions suppressionOptions,
         TranscriptionOptions transcriptionOptions,
         ILogger logger,
-        TriggerPhraseListener? triggerListener) : IDisposable
+        TriggerPhraseListener? triggerListener,
+        CaptureLevelMonitor levelMonitor) : IDisposable
     {
         private const int SegmentSamples = IAudioCaptureFactory.SampleRate * 10; // 10 seconds
 
@@ -300,6 +306,10 @@ public class WhisperSpeechToTextService(
             var duration = TimeSpan.FromSeconds(e.Samples.Length / (double)IAudioCaptureFactory.SampleRate);
 
             var block = new AudioBlock(endUtc - duration, endUtc, e.Samples);
+
+            // Every block, so "is this node carrying anything?" has a live answer rather
+            // than one that only updates when a transcript segment is drained.
+            levelMonitor.Report(device, e.Samples);
 
             lock (_bufferLock)
             {

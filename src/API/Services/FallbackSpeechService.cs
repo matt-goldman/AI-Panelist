@@ -19,6 +19,7 @@ public sealed class FallbackSpeechService(
     ITextToSpeechService tts,
     IAudioPlaybackService playback,
     IOptions<SilenceGuardOptions> options,
+    SpeechEnvelopePublisher envelopes,
     IWebHostEnvironment environment)
 {
     private readonly SilenceGuardOptions _options = options.Value;
@@ -42,6 +43,14 @@ public sealed class FallbackSpeechService(
                 : [];
         }
     }
+
+    /// <summary>
+    /// How many lines could be spoken right now, out of how many are configured, and how
+    /// many recorded WAVs were found. Recorded files need nothing synthesised, so any at
+    /// all means the fallback works even with the TTS down.
+    /// </summary>
+    public (int Ready, int Total, int Recorded) Readiness =>
+        (_synthesised.Count, Lines.Count, RecordedFiles.Length);
 
     /// <summary>
     /// Synthesise and cache the fallback lines, so they're ready before they're needed.
@@ -82,6 +91,8 @@ public sealed class FallbackSpeechService(
         logger.LogWarning("Speaking fallback line: {Line}", description);
 
         var wav = WavAudio.Parse(audio);
+        var pcm = WavAudio.ToPcm16(wav);
+
         await using var stream = await playback.OpenStreamAsync(wav.Format, cancellationToken);
 
         if (onFirstAudio is not null)
@@ -89,7 +100,13 @@ public sealed class FallbackSpeechService(
             await onFirstAudio();
         }
 
-        await stream.WriteAsync(WavAudio.ToPcm16(wav), cancellationToken);
+        // A quip gets a moving mouth like anything else. A line delivered by a frozen face
+        // reads as a worse fault than the one it is covering for.
+        envelopes.Begin();
+        await stream.WriteAsync(pcm, cancellationToken);
+        envelopes.Publish(pcm, wav.Format);
+        envelopes.Complete();
+
         await stream.CompleteAsync(cancellationToken);
         return true;
     }

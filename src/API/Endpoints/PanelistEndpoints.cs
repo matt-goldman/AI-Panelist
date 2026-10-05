@@ -33,6 +33,14 @@ public static class PanelistEndpoints
             .WithName("EnablePanelist")
             .WithSummary("Re-enable the AI panelist");
 
+        group.MapGet("/state", GetState)
+            .WithName("GetPanelistState")
+            .WithSummary("What Bubbles is doing right now");
+
+        group.MapPost("/introduce", IntroduceAsync)
+            .WithName("IntroduceSelf")
+            .WithSummary("Play the canned introduction, for checking the audio path end to end");
+
         group.MapGet("/transcript/search", SearchTranscript)
             .WithName("SearchTranscript")
             .WithSummary("Run the same transcript search the model's tool runs, to see what it would find and why");
@@ -74,6 +82,22 @@ public static class PanelistEndpoints
         logger.LogInformation("Enable endpoint called");
         await orchestrator.EnableAsync();
         return Results.Ok(new { message = "Panelist enabled" });
+    }
+
+    private static IResult GetState(AIPanelistOrchestrator orchestrator)
+        => Results.Ok(new
+        {
+            state = orchestrator.CurrentState.ToString(),
+            isDisabled = orchestrator.IsDisabled
+        });
+
+    private static async Task<IResult> IntroduceAsync(
+        AIPanelistOrchestrator orchestrator,
+        ILogger<PanelistEndpointLogger> logger)
+    {
+        logger.LogInformation("Introduce endpoint called");
+        await orchestrator.IntroduceSelf();
+        return Results.Ok(new { message = "Introduction played" });
     }
 
     private static IResult SearchTranscript(

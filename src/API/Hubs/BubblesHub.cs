@@ -4,9 +4,26 @@ using Shared;
 
 namespace API.Hubs;
 
-public class BubblesHub(AIPanelistOrchestrator orchestrator, ILogger<BubblesHub> logger) : Hub
+public class BubblesHub(
+    AIPanelistOrchestrator orchestrator,
+    DisplayRegistry displays,
+    ILogger<BubblesHub> logger) : Hub
 {
     private readonly ILogger<BubblesHub> _logger = logger;
+
+    public override Task OnConnectedAsync()
+    {
+        displays.Add(Context.ConnectionId);
+        _logger.LogInformation("Display connected ({Count} now connected)", displays.Count);
+        return base.OnConnectedAsync();
+    }
+
+    public override Task OnDisconnectedAsync(Exception? exception)
+    {
+        displays.Remove(Context.ConnectionId);
+        _logger.LogWarning("Display disconnected ({Count} left)", displays.Count);
+        return base.OnDisconnectedAsync(exception);
+    }
 
     public async Task UpdateConversationState(ConversationState state)
     {
