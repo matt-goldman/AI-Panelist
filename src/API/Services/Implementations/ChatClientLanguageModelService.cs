@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using API.Configuration;
+using API.Services.Diagnostics;
 using API.Services.Interfaces;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.DependencyInjection;
@@ -344,6 +345,9 @@ public class ChatClientLanguageModelService : ILanguageModelService
         var answerCharacters = 0;
         var loggedReasoning = false;
 
+        ResponseTimeline.MarkCurrent($"llm.dispatch ({pass})",
+            $"{messages.Sum(m => m.Text?.Length ?? 0)} prompt characters, {options.MaxOutputTokens} token budget");
+
         await foreach (var update in _responseClient.GetStreamingResponseAsync(messages, options, cancellationToken))
         {
             foreach (var content in update.Contents)
@@ -362,6 +366,14 @@ public class ChatClientLanguageModelService : ILanguageModelService
                         break;
 
                     case TextContent text when !string.IsNullOrEmpty(text.Text):
+                        // The hop that matters most: everything before it is the model,
+                        // everything after it is us.
+                        if (answerCharacters == 0)
+                        {
+                            ResponseTimeline.MarkCurrent($"llm.first-answer-token ({pass})",
+                                reasoningCharacters > 0 ? $"after {reasoningCharacters} characters of reasoning" : "no reasoning first");
+                        }
+
                         answerCharacters += text.Text.Length;
                         yield return text.Text;
                         break;
@@ -372,6 +384,9 @@ public class ChatClientLanguageModelService : ILanguageModelService
         _logger.LogInformation(
             "Streaming complete ({Pass}): {Answer} characters of answer, {Reasoning} characters of reasoning discarded",
             pass, answerCharacters, reasoningCharacters);
+
+        ResponseTimeline.MarkCurrent($"llm.complete ({pass})",
+            $"{answerCharacters} answer / {reasoningCharacters} reasoning characters");
 
         // OllamaSharp ends a cancelled stream quietly rather than throwing. Without this, a
         // moderator cancel would look like an empty answer and earn a fallback line.
@@ -481,6 +496,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
                         return "No more searches for this answer. Answer now with what you have.";
                     }
 
+                    ResponseTimeline.MarkCurrent("tool.search", keywords);
                     return SearchTranscript(keywords);
                 },
                 SearchToolName,

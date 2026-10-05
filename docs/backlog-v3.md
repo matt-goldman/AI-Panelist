@@ -62,11 +62,24 @@ So the rest of the list reads accurately. None of it has been through a live eve
   the model as a tool. Off by default.
 - **Item 9 (setup as software)** — *the dashboard half only.* See item 9 for what is
   actually wanted.
+- **Item 1 (instrument the response path)** — a per-response timeline, carried ambiently so
+  the orchestrator, the language model, the chunker and the speech pipeline can each mark
+  their own hops. Logged as one block and emitted as Activity events, so the same timings
+  appear in the Aspire dashboard. Records whether a summary was in flight at the trigger
+  and for how long, and the reasoning/answer split per pass.
+- **Item 10 (test tooling), partly** — `tests/API.Tests` is a real test project (52 tests,
+  no GPU, model, audio graph or network needed), and `tools/PanelBench` is the question-set
+  harness: a fixed set of questions through the real response path, reporting time to first
+  word, whether triage needed to think, and medians across runs. Still missing: replaying a
+  recorded panel offline.
 - **Item 8a, partly** — the hub now tracks connected displays and readiness fails when
   none are attached. The moderator-app notification on a dropped connection is **not**
   done, and neither is the dashboard on a second machine.
 
-Still untouched: items 1, 2, 2a, 6, 10, 11.
+Also done: summaries can run on their own endpoint and are cancelled when a trigger
+arrives (item 2), which was the contention the backlog predicted.
+
+Still untouched: items 6 and 11. Item 2a is now possible but unmeasured.
 
 ---
 

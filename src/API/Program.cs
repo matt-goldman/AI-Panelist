@@ -12,6 +12,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 
+// The per-response timeline is emitted as Activity events as well as logged, so the same
+// hops show up in the Aspire dashboard rather than only in a console nobody can watch
+// during an event. ServiceDefaults only registers the application's own source by name.
+builder.Services.AddOpenTelemetry().WithTracing(tracing =>
+    tracing.AddSource(API.Services.Diagnostics.ResponseTimeline.ActivitySourceName));
+
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
@@ -126,6 +132,7 @@ switch (options.SttServiceType?.ToLower())
 
 // Described in the startup summary once the app is built.
 var chatClientDescription = (string?)null;
+var summaryConfigurationError = (string?)null;
 
 // LLM Service
 //
@@ -149,16 +156,27 @@ switch (options.LlmServiceType?.ToLower())
         var summaryConfigured = builder.Configuration.GetSection("ChatClient:Summary").GetChildren()
             .Any(c => !string.IsNullOrWhiteSpace(c.Value));
 
+        IChatClient summaryClient = responseClient;
+
         if (summaryConfigured)
         {
-            var summaryClient = BuildChatClient(builder, "ChatClient:Summary", out var summaryDescription, "ChatClient");
-            chatClientDescription += $"; summaries on {summaryDescription}";
-            builder.Services.AddKeyedSingleton(ChatClientLanguageModelService.SummaryClientKey, summaryClient);
+            // Misconfigured summaries must not stop the app starting. An empty summary is
+            // survivable by design - the response path carries on without one - whereas a
+            // refusal to start is not, and the usual cause is a key that lives in
+            // user-secrets and so is absent in any environment that doesn't load them.
+            try
+            {
+                summaryClient = BuildChatClient(builder, "ChatClient:Summary", out var summaryDescription, "ChatClient");
+                chatClientDescription += $"; summaries on {summaryDescription}";
+            }
+            catch (Exception ex)
+            {
+                chatClientDescription += "; summaries FELL BACK to the response model";
+                summaryConfigurationError = ex.Message;
+            }
         }
-        else
-        {
-            builder.Services.AddKeyedSingleton(ChatClientLanguageModelService.SummaryClientKey, responseClient);
-        }
+
+        builder.Services.AddKeyedSingleton(ChatClientLanguageModelService.SummaryClientKey, summaryClient);
 
         builder.Services.AddSingleton<ILanguageModelService, ChatClientLanguageModelService>();
         break;
@@ -373,6 +391,13 @@ logger.LogInformation("  Response triage: {Status}", triageOptions.Enabled
 if (triageOptions.Enabled && (languageModel is not ChatClientLanguageModelService || !streamingOptions.Enabled))
 {
     logger.LogWarning("    Triage needs LlmServiceType 'ChatClient' with streaming enabled - it won't run");
+}
+
+if (summaryConfigurationError is not null)
+{
+    logger.LogError(
+        "    Summaries are configured to use their own endpoint but it could not be built, so they will "
+        + "run on the response model instead: {Error}", summaryConfigurationError);
 }
 
 var searchOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<TranscriptSearchOptions>>().Value;

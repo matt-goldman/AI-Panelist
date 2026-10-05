@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 using API.Configuration;
+using API.Services.Diagnostics;
 using Microsoft.Extensions.Options;
 
 namespace API.Services;
@@ -82,6 +83,9 @@ public class ResponseChunker(IOptions<StreamingResponseOptions> options)
                 buffer.Remove(0, split);
 
                 if (chunk.Length == 0) continue;
+
+                ResponseTimeline.MarkCurrent(
+                    isFirstChunk ? "chunk.first-closed" : "chunk.closed", $"{chunk.Length} characters");
 
                 isFirstChunk = false;
                 yield return chunk;

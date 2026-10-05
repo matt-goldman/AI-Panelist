@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Threading.Channels;
 using API.Configuration;
+using API.Services.Diagnostics;
 using API.Services.Implementations.PipeWire;
 using API.Services.Interfaces;
 using Microsoft.Extensions.Options;
@@ -86,6 +87,7 @@ public class StreamingSpeechPipeline(
                     }
 
                     timeToFirstAudio = stopwatch.Elapsed;
+                    ResponseTimeline.MarkCurrent("audio.first-sample", $"\"{chunk.Text}\"");
                     logger.LogInformation(
                         "Time to first audio: {Ms}ms (first chunk: \"{Chunk}\")",
                         (int)timeToFirstAudio.TotalMilliseconds, chunk.Text);
@@ -160,6 +162,8 @@ public class StreamingSpeechPipeline(
         ChannelWriter<SynthesisedChunk> writer,
         CancellationToken cancellationToken)
     {
+        var first = true;
+
         try
         {
             await foreach (var chunk in chunker.ChunkAsync(tokens, cancellationToken))
@@ -168,6 +172,12 @@ public class StreamingSpeechPipeline(
                 if (text.Length == 0) continue;
 
                 var audio = await tts.SynthesizeAsync(text, cancellationToken);
+
+                ResponseTimeline.MarkCurrent(
+                    first ? "tts.first-chunk-synthesised" : "tts.chunk-synthesised",
+                    $"{audio.Length / 1024}KB");
+                first = false;
+
                 await writer.WriteAsync(new SynthesisedChunk(text, audio), cancellationToken);
             }
 

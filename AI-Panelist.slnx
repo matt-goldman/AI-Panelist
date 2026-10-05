@@ -6,6 +6,12 @@
   <Folder Name="/src/">
     <Project Path="src/API/API.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/API.Tests/API.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/PanelBench/PanelBench.csproj" />
+  </Folder>
   <Folder Name="/src/Common/">
     <Project Path="src/Shared/Shared.csproj" />
   </Folder>

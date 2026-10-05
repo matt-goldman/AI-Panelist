@@ -1,5 +1,6 @@
 using API.Configuration;
 using API.Hubs;
+using API.Services.Diagnostics;
 using API.Services.Interfaces;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
@@ -44,6 +45,16 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     /// answer is not.
     /// </summary>
     private CancellationTokenSource? _summaryCts;
+
+    /// <summary>
+    /// When the in-flight summary started. Recorded because "was a summary running when
+    /// the trigger arrived, and for how long" is the single field most likely to explain
+    /// a slow response — one model, one GPU.
+    /// </summary>
+    private DateTime? _summaryStartedUtc;
+
+    /// <summary>How long a summary had been running when the trigger arrived, for the timeline.</summary>
+    private TimeSpan? _summaryRunningAtTrigger;
 
     /// <summary>When the last response finished, for the summarisation cooldown.</summary>
     private DateTime _responseEndedUtc = DateTime.MinValue;
@@ -172,6 +183,10 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             }
 
             _logger.LogInformation("Triggering AI response");
+
+            _summaryRunningAtTrigger = _summaryStartedUtc is { } startedAt
+                ? DateTime.UtcNow - startedAt
+                : null;
 
             // The response always wins. An uninterruptible summary is the biggest source
             // of time-to-first-audio we can actually control: one model, one GPU, and a
@@ -442,6 +457,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
 
             var cts = new CancellationTokenSource();
             _summaryCts = cts;
+            _summaryStartedUtc = DateTime.UtcNow;
 
             try
             {
@@ -475,7 +491,12 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             }
             finally
             {
-                if (ReferenceEquals(_summaryCts, cts)) _summaryCts = null;
+                if (ReferenceEquals(_summaryCts, cts))
+                {
+                    _summaryCts = null;
+                    _summaryStartedUtc = null;
+                }
+
                 cts.Dispose();
             }
         }
@@ -499,6 +520,14 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private async Task GenerateAndSpeakResponseAsync(CancellationToken cancellationToken)
     {
         _isResponseInProgress = true;
+
+        // Ambient for everything below, including the language model, the chunker and the
+        // speech pipeline, none of which the orchestrator calls directly enough to thread
+        // a timer through. Logged as one block when disposed.
+        using var timeline = ResponseTimeline.Begin(
+            _logger,
+            _triggerUtterance is { Length: > 0 } ? "spoken phrase" : "button",
+            _summaryRunningAtTrigger);
 
         // Opened the moment audio actually starts leaving the app, not now: the hosts may
         // still be talking while we think, and that is transcript we want to keep.
@@ -689,6 +718,9 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         var question = GetQuestionSinceLastResponse();
         _logger.LogDebug("Responding to: {Question}", question);
 
+        ResponseTimeline.MarkCurrent("context.snapshot",
+            $"summary {summary.Length}, recent {recentTranscript.Length}, question {question.Length} characters");
+
         var tokens = _silenceGuard.Enabled
             ? watchdog.Watch(token => _llmService.StreamResponseAsync(summary, recentTranscript, question, token), cancellationToken)
             : _llmService.StreamResponseAsync(summary, recentTranscript, question, cancellationToken);
@@ -699,8 +731,11 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         {
             _logger.LogError("No answer after {Chunks} chunk(s) spoken: {Reason}",
                 result.ChunkCount, watchdog.Failure ?? "the stream produced nothing speakable");
+            ResponseTimeline.MarkCurrent("fallback.spoken", watchdog.Failure);
             await SpeakFallbackAsync(OnFirstAudio, cancellationToken);
         }
+
+        ResponseTimeline.MarkCurrent("response.complete", $"{result.ChunkCount} chunk(s)");
 
         _logger.LogInformation("Response spoken in {Chunks} chunks: {Response}", result.ChunkCount, result.Text);
         _captureService.CaptureTextResponse(result.Text, summary);
