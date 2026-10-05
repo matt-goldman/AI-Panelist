@@ -28,6 +28,8 @@ public sealed class SetupActions(
     public const string AudioGraphRoute = "audio-graph-route";
     public const string EchoOn = "echo-on";
     public const string EchoOff = "echo-off";
+    public const string MonitorOn = "monitor-on";
+    public const string MonitorOff = "monitor-off";
 
     private static readonly Dictionary<string, (string[] Arguments, string Describes)> Allowed = new()
     {
@@ -35,7 +37,9 @@ public sealed class SetupActions(
         [AudioGraphDown]  = (["down"],          "Unload the audio graph"),
         [AudioGraphRoute] = (["route"],         "Route the browser tab into the capture sink"),
         [EchoOn]          = (["echo", "on"],    "Turn the rehearsal echo path on"),
-        [EchoOff]         = (["echo", "off"],   "Turn the rehearsal echo path off")
+        [EchoOff]         = (["echo", "off"],   "Turn the rehearsal echo path off"),
+        [MonitorOn]       = (["monitor", "on"],  "Hear Bubbles on this machine"),
+        [MonitorOff]      = (["monitor", "off"], "Stop hearing Bubbles on this machine")
     };
 
     private readonly SetupOptions _options = options.Value;

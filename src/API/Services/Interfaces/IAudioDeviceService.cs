@@ -8,6 +8,17 @@ namespace API.Services.Interfaces;
 public interface IAudioDeviceService
 {
     /// <summary>
+    /// Raised when the set of devices to capture from changes — selected, deselected, or
+    /// enabled/disabled.
+    ///
+    /// Without this, choosing a microphone on the setup page updated a list and nothing
+    /// else: capture had already been started from whatever was selected at boot and never
+    /// looked again. The page said "selected", the audio did not change, and the only cure
+    /// was a restart — which is the worst possible failure mode for the one tool whose job
+    /// is to tell you the setup is right.
+    /// </summary>
+    event EventHandler? SelectionChanged;
+    /// <summary>
     /// Get list of available input audio devices
     /// </summary>
     Task<List<AudioDeviceInfo>> GetInputDevicesAsync();

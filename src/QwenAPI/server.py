@@ -41,13 +41,14 @@ app = FastAPI(title="Qwen3-TTS Optimized API")
 
 # Path to reference audio (use ~ for home directory)
 TTS_REF_AUDIO = os.path.expanduser(
-    os.environ.get("TTS_REF_AUDIO", "~/qwentts/bubbles-sample.wav")
+    os.environ.get("TTS_REF_AUDIO", "~/qwentts/bubbles-sample-uly.wav")
 )
 
 # Transcript of the reference audio - MUST match the audio content
 TTS_REF_TEXT = os.environ.get(
     "TTS_REF_TEXT",
-    "g'day I'm Bubbles, the AI panelist. Thanks to the Beer Driven Devs for having me, I'm so excited to be here this evening."
+    #"g'day I'm Bubbles, the AI panelist. Thanks to the Beer Driven Devs for having me, I'm so excited to be here this evening."
+    "So to compare that against AI workflows. Right an AI enabled workflow, this is what a workflow looks like you've all probably bought a book from Amazon before it's a pretty simple kind of flow chart you come in your register or you're already signed in or whatever you choose a book, which kind of one do you want how do you want it done where do you want it sent to. simple stuff basically every customer goes from A to Z via one of these paths."
 )
 
 # Global model reference

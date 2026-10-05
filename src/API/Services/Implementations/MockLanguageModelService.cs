@@ -32,7 +32,7 @@ public class MockLanguageModelService : ILanguageModelService
         return summary;
     }
 
-    public async Task<string> GenerateResponseAsync(string summary, string recentTranscript, CancellationToken cancellationToken = default)
+    public async Task<string> GenerateResponseAsync(string summary, string recentTranscript, string question, CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Mock LLM: Generating response based on summary and recent transcript");
 

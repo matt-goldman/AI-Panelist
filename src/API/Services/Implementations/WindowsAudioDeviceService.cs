@@ -9,6 +9,9 @@ namespace API.Services.Implementations;
 /// </summary>
 public class WindowsAudioDeviceService(ILogger<WindowsAudioDeviceService> logger) : IAudioDeviceService
 {
+    /// <inheritdoc />
+    public event EventHandler? SelectionChanged;
+
     private readonly ILogger<WindowsAudioDeviceService> _logger = logger;
     private List<AudioDeviceInfo> _selectedDevices = [];
     private List<AudioDeviceInfo>? _cachedDevices;

@@ -20,6 +20,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private readonly IAudioPlaybackService _audioPlayback;
     private readonly TranscriptBufferService _transcriptBuffer;
     private readonly PanelTranscriptLog _transcriptLog;
+    private readonly SummaryHealth _summaryHealth;
     private readonly TriggerPhraseMatcher _triggerMatcher;
     private readonly ResponseCaptureService _captureService;
     private readonly SelfSuppressionGate _suppressionGate;
@@ -37,6 +38,26 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     private bool _isResponseInProgress = false;
     private CancellationTokenSource? _responseCts;
     private CancellationTokenSource? _fillerCts;
+
+    /// <summary>
+    /// The in-flight summary, so a trigger can cancel it. A stale summary is fine; a slow
+    /// answer is not.
+    /// </summary>
+    private CancellationTokenSource? _summaryCts;
+
+    /// <summary>When the last response finished, for the summarisation cooldown.</summary>
+    private DateTime _responseEndedUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// What the trigger listener heard when it fired.
+    ///
+    /// The listener recognises a phrase within about a second; the transcript worker is
+    /// several seconds behind it by design, because it wants long windows for accuracy. So
+    /// at the moment a response starts, the question that triggered it is often not in the
+    /// rolling buffer yet — Bubbles answered "that's a bit of a cliffhanger" to a question
+    /// it had not been given. The listener already transcribed those words, so use them.
+    /// </summary>
+    private string? _triggerUtterance;
     private readonly SemaphoreSlim _stateLock = new(1, 1);
     private readonly Random _random = new();
 
@@ -49,6 +70,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         IAudioPlaybackService audioPlayback,
         TranscriptBufferService transcriptBuffer,
         PanelTranscriptLog transcriptLog,
+        SummaryHealth summaryHealth,
         TriggerPhraseMatcher triggerMatcher,
         ResponseCaptureService captureService,
         SelfSuppressionGate suppressionGate,
@@ -66,6 +88,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _audioPlayback = audioPlayback;
         _transcriptBuffer = transcriptBuffer;
         _transcriptLog = transcriptLog;
+        _summaryHealth = summaryHealth;
         _triggerMatcher = triggerMatcher;
         _captureService = captureService;
         _suppressionGate = suppressionGate;
@@ -149,6 +172,15 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             }
 
             _logger.LogInformation("Triggering AI response");
+
+            // The response always wins. An uninterruptible summary is the biggest source
+            // of time-to-first-audio we can actually control: one model, one GPU, and a
+            // summary mid-flight owns it until it finishes.
+            if (_summaryCts is { IsCancellationRequested: false })
+            {
+                _logger.LogInformation("Cancelling the in-flight summary so the response has the model to itself");
+                _summaryCts.Cancel();
+            }
 
             // Cancel any previous response
             _responseCts?.Cancel();
@@ -272,6 +304,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         {
             speaking?.Dispose();
             _isResponseInProgress = false;
+            _responseEndedUtc = DateTime.UtcNow;
         }
 
         static async IAsyncEnumerable<string> Single(string text)
@@ -370,6 +403,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         try
         {
             _logger.LogInformation("Spoken trigger from {Source}, triggering response", e.Source ?? "unknown");
+            _triggerUtterance = e.Text;
             await TriggerResponseAsync();
         }
         catch (Exception ex)
@@ -389,6 +423,16 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
                 return;
             }
 
+            // And for a while afterwards: the question that follows an answer tends to
+            // arrive while the answer is still being heard.
+            var sinceResponse = DateTime.UtcNow - _responseEndedUtc;
+            if (sinceResponse < TimeSpan.FromSeconds(_options.SummaryCooldownSeconds))
+            {
+                _logger.LogDebug("Skipping summary generation - only {Seconds:F0}s since the last response",
+                    sinceResponse.TotalSeconds);
+                return;
+            }
+
             var transcript = _transcriptBuffer.GetFullTranscript();
             if (string.IsNullOrWhiteSpace(transcript))
             {
@@ -396,21 +440,59 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
                 return;
             }
 
-            _logger.LogInformation("Generating periodic summary");
-            var summary = await _llmService.GenerateSummaryAsync(transcript);
+            var cts = new CancellationTokenSource();
+            _summaryCts = cts;
 
-            lock (_summaryLock)
+            try
             {
-                _currentSummary = summary;
+                _logger.LogInformation("Generating periodic summary");
+                var summary = await _llmService.GenerateSummaryAsync(transcript, cts.Token);
+
+                // An empty result must never replace a good summary. A reasoning model that
+                // spends its whole budget thinking returns nothing, and overwriting with
+                // that silently strips every later response of its context - which is
+                // exactly what happened: nine "successful" summaries and responses still
+                // going out with none.
+                if (string.IsNullOrWhiteSpace(summary))
+                {
+                    _summaryHealth.RecordFailure("the model returned an empty summary");
+                    _logger.LogWarning(
+                        "Summary came back empty and has been discarded; keeping the previous one. "
+                        + "If this persists the model is spending its whole budget reasoning - raise the "
+                        + "summary token budget or turn its thinking off.");
+                    return;
+                }
+
+                lock (_summaryLock)
+                {
+                    _currentSummary = summary;
+                }
+
+                _logger.LogDebug("Summary generated: {Summary}", summary);
+                _summaryHealth.RecordSuccess();
+
+                await BroadcastConversationStateAsync();
             }
-
-            _logger.LogDebug("Summary generated: {Summary}", summary);
-
-            await BroadcastConversationStateAsync();
+            finally
+            {
+                if (ReferenceEquals(_summaryCts, cts)) _summaryCts = null;
+                cts.Dispose();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Abandoned for a response. The previous summary stays current, which is the
+            // whole point of the rolling-summary design.
+            _summaryHealth.RecordAbandoned();
+            _logger.LogInformation("Summary abandoned so a response could start");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error generating summary");
+            // Recorded as well as logged: a summary endpoint that is wrong, unreachable or
+            // unauthorised otherwise fails in silence, and every response afterwards is
+            // generated with no summary at all.
+            _summaryHealth.RecordFailure($"{ex.GetType().Name}: {ex.Message}");
+            _logger.LogError(ex, "Error generating summary - responses will have no discussion summary until this works");
         }
     }
 
@@ -484,12 +566,13 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             var recentTranscript = _transcriptBuffer.GetRecentTranscript(TimeSpan.FromSeconds(60));
 
             _logger.LogInformation("Generating response...");
-            var response = await _llmService.GenerateResponseAsync(summary, recentTranscript, cancellationToken);
+            var response = await _llmService.GenerateResponseAsync(
+                summary, recentTranscript, GetQuestionSinceLastResponse(), cancellationToken);
             _logger.LogInformation("Response generated: {Response}", response);
 
             // Capture the response asynchronously (non-blocking)
             _captureService.CaptureTextResponse(response, summary);
-            _transcriptLog.Add(response, DateTime.UtcNow, PanelTranscriptLog.BubblesSpeaker);
+            RecordOwnTurn(response);
 
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -557,6 +640,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             // StreamYard and back into the captured tab mix.
             speaking?.Dispose();
             _isResponseInProgress = false;
+            _responseEndedUtc = DateTime.UtcNow;
         }
     }
 
@@ -602,9 +686,12 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
             _silenceGuard.Enabled ? TimeSpan.FromSeconds(_silenceGuard.MaxSilenceSeconds) : TimeSpan.Zero,
             _logger);
 
+        var question = GetQuestionSinceLastResponse();
+        _logger.LogDebug("Responding to: {Question}", question);
+
         var tokens = _silenceGuard.Enabled
-            ? watchdog.Watch(token => _llmService.StreamResponseAsync(summary, recentTranscript, token), cancellationToken)
-            : _llmService.StreamResponseAsync(summary, recentTranscript, cancellationToken);
+            ? watchdog.Watch(token => _llmService.StreamResponseAsync(summary, recentTranscript, question, token), cancellationToken)
+            : _llmService.StreamResponseAsync(summary, recentTranscript, question, cancellationToken);
 
         var result = await _streamingSpeech.SpeakAsync(tokens, OnFirstAudio, cancellationToken);
 
@@ -618,9 +705,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         _logger.LogInformation("Response spoken in {Chunks} chunks: {Response}", result.ChunkCount, result.Text);
         _captureService.CaptureTextResponse(result.Text, summary);
 
-        // Self-suppression keeps Bubbles' voice out of the transcript, so this is the only
-        // way "what did you say earlier, Bubbles?" can be answered.
-        _transcriptLog.Add(result.Text, DateTime.UtcNow, PanelTranscriptLog.BubblesSpeaker);
+        RecordOwnTurn(result.Text);
 
         await SetStateAsync(AiPanelistState.Listening);
     }
@@ -638,6 +723,64 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
         }
 
         await _fallbackSpeech.SpeakAsync(onFirstAudio, cancellationToken);
+    }
+
+    /// <summary>
+    /// Put Bubbles' own answer into the record.
+    ///
+    /// Into the rolling buffer as well as the session log, because self-suppression keeps
+    /// its voice out of the captured audio — so without this the model cannot see its own
+    /// contributions, cannot tell which questions it has already answered, and repeats itself.
+    /// </summary>
+    private void RecordOwnTurn(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        var now = DateTime.UtcNow;
+        _transcriptBuffer.AddEntry(text, now, PanelTranscriptLog.BubblesSpeaker);
+        _transcriptLog.Add(text, now, PanelTranscriptLog.BubblesSpeaker);
+    }
+
+    /// <summary>
+    /// Everything said since Bubbles last finished speaking — the thing it is actually
+    /// being asked now.
+    ///
+    /// The rolling window alone was not enough: a minute of transcript can hold three
+    /// questions, Bubbles' own replies are kept out of it by self-suppression, and so the
+    /// model had no way to tell which it had already answered. It answered the previous
+    /// one while the new one sat two lines below.
+    /// </summary>
+    private string GetQuestionSinceLastResponse()
+    {
+        var since = _responseEndedUtc == DateTime.MinValue
+            ? TimeSpan.FromSeconds(30)
+            : DateTime.UtcNow - _responseEndedUtc;
+
+        // Floored so a very fast follow-up still carries its question; capped so a long
+        // gap doesn't just reproduce the whole window.
+        var window = TimeSpan.FromSeconds(Math.Clamp(since.TotalSeconds, 8, 45));
+        var transcribed = _transcriptBuffer.GetRecentTranscript(window);
+
+        // The trigger listener runs several seconds ahead of the transcript, so what it
+        // heard is usually the newest thing said - and often the only copy of the question.
+        var utterance = Interlocked.Exchange(ref _triggerUtterance, null);
+        if (string.IsNullOrWhiteSpace(utterance)) return transcribed;
+
+        // Only add it if the transcript has not caught up with it already, or the question
+        // appears twice and the model answers it twice.
+        var normalisedTranscript = TriggerPhraseMatcher.Normalise(transcribed);
+        var normalisedUtterance = TriggerPhraseMatcher.Normalise(utterance);
+
+        if (normalisedUtterance.Length > 0 && normalisedTranscript.Contains(normalisedUtterance, StringComparison.Ordinal))
+        {
+            return transcribed;
+        }
+
+        _logger.LogDebug("Transcript had not caught up with the trigger; using what the listener heard: {Text}", utterance);
+
+        return string.IsNullOrWhiteSpace(transcribed)
+            ? utterance
+            : $"{transcribed}\n{utterance}";
     }
 
     private async Task SetStateAsync(AiPanelistState newState)
@@ -672,6 +815,7 @@ public class AIPanelistOrchestrator : IHostedService, IDisposable
     {
         _triggerMatcher.TriggerDetected -= OnTriggerPhraseDetected;
         _summaryTimer?.Dispose();
+        _summaryCts?.Dispose();
         _responseCts?.Dispose();
         _fillerCts?.Dispose();
         _stateLock?.Dispose();

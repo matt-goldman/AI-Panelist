@@ -75,6 +75,7 @@ public sealed class ReadinessService(
     IAudioDeviceService deviceService,
     CaptureLevelMonitor levelMonitor,
     DisplayRegistry displays,
+    SummaryHealth summaryHealth,
     FallbackSpeechService fallbackSpeech,
     ITextToSpeechService tts,
     ILanguageModelService languageModel,
@@ -102,12 +103,14 @@ public sealed class ReadinessService(
 
         var audio = AudioChecksAsync(cancellationToken);
         var model = TimedAsync("llm", "Language model", CheckLanguageModelAsync, cancellationToken);
+        var summary = TimedAsync("summary-model", "Summary model", CheckSummaryModelAsync, cancellationToken);
         var speech = TimedAsync("tts", "Text to speech", CheckTtsAsync, cancellationToken);
 
         var checks = new List<CheckResult>();
         checks.AddRange(await audio);
         checks.Add(CheckWhisperModel());
         checks.Add(await model);
+        checks.Add(await summary);
         checks.Add(await speech);
         checks.Add(CheckFallbackLines());
         checks.Add(CheckDisplays());
@@ -160,6 +163,7 @@ public sealed class ReadinessService(
         var modules = await ModulesAsync(cancellationToken);
 
         checks.Add(GraphCheck(sources, sinks));
+        checks.Add(OutputPathCheck(sources, modules));
         checks.Add(EchoPathCheck(modules));
         checks.Add(CaptureSignalCheck());
 
@@ -206,6 +210,52 @@ public sealed class ReadinessService(
 
         return new CheckResult("audio-graph", "Audio graph", CheckStatus.Pass,
             "The configured capture source and output sink both exist.");
+    }
+
+    /// <summary>
+    /// Where Bubbles' voice goes, and whether you can hear it.
+    ///
+    /// Worth stating plainly on every run, because the design makes silence ambiguous:
+    /// TTS plays into a null sink whose only consumer is the virtual mic the broadcast
+    /// reads. Hearing nothing on this machine is correct, and is also what a completely
+    /// dead TTS sounds like.
+    /// </summary>
+    private CheckResult OutputPathCheck(HashSet<string> sources, string modules)
+    {
+        var mic = _pipeWire.VirtualMicSource;
+        if (mic is null or "")
+        {
+            return new CheckResult("output-path", "Where Bubbles' voice goes", CheckStatus.Skipped,
+                "No virtual mic is configured (PipeWire:VirtualMicSource).");
+        }
+
+        if (!sources.Contains(mic))
+        {
+            return new CheckResult("output-path", "Where Bubbles' voice goes", CheckStatus.Fail,
+                $"The virtual mic '{mic}' does not exist, so nothing can pick Bubbles up.",
+                "Load the audio graph (bubbles-audio.sh up).",
+                SetupActions.AudioGraphUp);
+        }
+
+        var captureSink = _pipeWire.DefaultCaptureNode?.Replace(".monitor", string.Empty);
+
+        // A loopback from the mic to anywhere that isn't the capture sink is you listening;
+        // one to the capture sink is the rehearsal echo path, which is a different thing.
+        var monitoring = modules.Split('\n').Any(line =>
+            line.Contains("module-loopback", StringComparison.Ordinal)
+            && line.Contains($"source={mic}", StringComparison.Ordinal)
+            && (captureSink is null or "" || !line.Contains($"sink={captureSink}", StringComparison.Ordinal)));
+
+        return monitoring
+            ? new CheckResult("output-path", "Where Bubbles' voice goes", CheckStatus.Pass,
+                $"Into '{mic}' for the stream, and looped to this machine's output so you can hear it.",
+                "Turn monitoring off for an in-person event, where the PA already carries it.",
+                SetupActions.MonitorOff)
+            : new CheckResult("output-path", "Where Bubbles' voice goes", CheckStatus.Pass,
+                $"Into '{mic}', which is what the stream reads. You will NOT hear Bubbles on this machine - "
+                + "that is correct, not a fault.",
+                "To hear it while setting up, turn monitoring on.",
+                SetupActions.MonitorOn);
     }
 
     /// <summary>
@@ -370,6 +420,66 @@ public sealed class ReadinessService(
                 $"{model} did not answer: {ex.Message}",
                 "Check the inference server is running and the model name is pulled.");
         }
+    }
+
+    /// <summary>
+    /// Probes whatever summaries run on. Separate from the response probe because they can
+    /// point at different endpoints — and when they do, the summary endpoint can be wrong,
+    /// unreachable or unauthorised while answers carry on working perfectly. The only
+    /// visible symptom is responses quietly losing their sense of the discussion.
+    /// </summary>
+    private async Task<CheckResult> CheckSummaryModelAsync(CancellationToken cancellationToken)
+    {
+        var client = services.GetKeyedService<IChatClient>(ChatClientLanguageModelService.SummaryClientKey);
+        var responseClient = services.GetService<IChatClient>();
+
+        if (client is null)
+        {
+            return new CheckResult("summary-model", "Summary model", CheckStatus.Skipped,
+                $"LLM service is '{_panelist.LlmServiceType}', which has no separate summary client.");
+        }
+
+        var status = summaryHealth.Status;
+        var separate = !ReferenceEquals(client, responseClient);
+
+        if (!separate && status.ConsecutiveFailures == 0)
+        {
+            return new CheckResult("summary-model", "Summary model", CheckStatus.Pass,
+                "Same endpoint as responses" + History(status) + ".");
+        }
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(90));
+
+            var options = new ChatOptions { MaxOutputTokens = 1, Temperature = 0 };
+            options.AddOllamaOption(OllamaOption.Think, false);
+
+            await client.GetResponseAsync("Say OK.", options, timeout.Token);
+
+            return status.ConsecutiveFailures > 0
+                ? new CheckResult("summary-model", "Summary model", CheckStatus.Warn,
+                    $"Answering now, but the last {status.ConsecutiveFailures} summary attempt(s) failed: {status.LastError}",
+                    "Re-run after the next summary to confirm it has recovered.")
+                : new CheckResult("summary-model", "Summary model", CheckStatus.Pass,
+                    "Its own endpoint, and it answered" + History(status) + ".");
+        }
+        catch (Exception ex)
+        {
+            return new CheckResult("summary-model", "Summary model", CheckStatus.Fail,
+                $"The summary endpoint did not answer: {ex.Message}. "
+                + "Responses still work, but without any summary of the discussion.",
+                "Check ChatClient:Summary - endpoint, model name and API key.");
+        }
+
+        static string History(SummaryStatus status) =>
+            status switch
+            {
+                { Successes: 0, ConsecutiveFailures: 0, Abandoned: 0 } => "; no summary has run yet",
+                { Successes: 0 } => $"; none of {status.ConsecutiveFailures + status.Abandoned} attempt(s) have produced one",
+                _ => $"; {status.Successes} produced so far"
+            };
     }
 
     /// <summary>

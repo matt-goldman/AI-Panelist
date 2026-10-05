@@ -61,6 +61,7 @@ public class FoundryLocalLanguageModelService : ILanguageModelService
     public async Task<string> GenerateResponseAsync(
         string summary,
         string recentTranscript,
+        string question,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Generating response via Foundry Local");

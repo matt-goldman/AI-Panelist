@@ -40,6 +40,36 @@ discovering it live.
 
 ---
 
+## Built since this was written
+
+So the rest of the list reads accurately. None of it has been through a live event yet.
+
+- **Item 4 (never go silent)** — a canned line whenever a response produces nothing: empty
+  answer, LLM error, or no answer text for N seconds. Lines are synthesised at startup and
+  cached, so they survive the TTS failing. The empty-response failure was reproduced first.
+- **Item 3 (turn down the thinking)**, as response triage — every answer starts with
+  reasoning off; the model asks for thinking time only when it needs it, and a spoken
+  holding line covers the wait. First answer token went from 10–16s to under a second on
+  the ordinary questions, and the two empty answers in the test set disappeared.
+- **Item 5 (spoken triggers)** — a second Whisper worker per device on a short rolling
+  window, so a phrase fires within about a second instead of the 5–10s the transcript loop
+  would take. Off by default.
+- **Item 7 (a mouth that means something)** — the API publishes an RMS envelope per chunk
+  with a schedule; both displays replay it on their own clock. Shared drawing lives in
+  `Bubbles.Visuals` so the MAUI and GTK displays cannot drift apart. The MAUI app pulses
+  the Lottie by default and can switch to the bar meter.
+- **Item 8 (look things up)** — whole-session transcript with keyword search, offered to
+  the model as a tool. Off by default.
+- **Item 9 (setup as software)** — *the dashboard half only.* See item 9 for what is
+  actually wanted.
+- **Item 8a, partly** — the hub now tracks connected displays and readiness fails when
+  none are attached. The moderator-app notification on a dropped connection is **not**
+  done, and neither is the dashboard on a second machine.
+
+Still untouched: items 1, 2, 2a, 6, 10, 11.
+
+---
+
 ## P0 — Fix what broke, and make it measurable
 
 ### 1. Instrument the response path properly
@@ -298,31 +328,73 @@ actually is.
 
 ## P2 — Tooling, and the second screen
 
-### 9. Setup as software, not discipline
+### 9. Setup as software, not discipline — the setup wizard
 
-The run sheet worked, but it's a checklist held together by memory and attention on the one
-night attention is scarcest. **The principle: move setup from discipline to automation.**
+**A project in its own right, not a feature.** What exists today is the dashboard half of
+this: a web app at `/setup` with readiness checks, live input meters, device naming, the
+audio-graph actions and a speak-and-watch test. That is useful, and it is not the idea.
+The idea is a **wizard**: something that takes you through a run from nothing to ready,
+asking only what differs this time and verifying each answer before moving on.
 
-There's already precedent in the repo — `setup-guide.md`, `SETUP_REAL_SERVICES.md`,
-`start-server.bat`, and the whole documented Rube Goldberg machine for getting Qwen3-TTS
-running under WSL. That was a palaver for someone who isn't a Python developer, and the
-response was to write it down. The next step is to run it.
+**The principle: move setup from discipline to automation.** The run sheet worked, but it
+is a checklist held together by memory and attention on the one night attention is
+scarcest.
 
-Could be a local tool, could be a feature in the moderator app. Shape isn't decided.
+**It has to be adaptive, not a static script.** The two outings so far needed materially
+different setups and the next in-person one will differ again. Anything that changes
+between runs becomes a question; everything else is checked rather than asked.
 
-**It has to be adaptive, not a static script.** Anything that differs between runs becomes a
-prompt: how many speakers, what are their names, online or in person, which capture source,
-which model. A one-and-done setup tool would be wrong by the second event — the two outings so
-far needed materially different setups, and the next in-person one will differ again.
+**The first question is the one that changes everything else: online or in person.** This
+is not a cosmetic branch — the whole audio topology differs, in both directions:
 
-Natural checks to automate, all of which cost real time when done by hand:
+| | Online (StreamYard) | In person |
+|---|---|---|
+| Capture | The browser tab's sink monitor, because the remote hosts only exist inside the tab mix | The panelists' microphones, one source per speaker (item 6) |
+| Bubbles' voice out | `bubbles-tts-sink` → `bubbles-mic`, picked as the guest's microphone | The default output, into the PA |
+| Hearing Bubbles | Only via the monitor loopback, because the voice goes to the stream | Unavoidable — the room is carrying it |
+| Hearing the hosts | Needs the tab-sink loopback | The room |
 
-- Audio graph up, and the *right* loopbacks loaded, with amplitude verified rather than assumed.
-- Capture node actually carrying signal (the room-microphone bug would have been caught in
-  seconds by an automated amplitude check).
-- Model reachable and the configured name actually pulled.
-- TTS warm, reference audio present and matching its transcript.
-- Rehearsal echo path **off** before going live.
+Today the online topology is effectively hardcoded in `appsettings`
+(`PipeWire:DefaultCaptureNode`, `PipeWire:OutputSink`), and an in-person run that forgets
+to change them captures a sink nothing is feeding and hears nothing at all. The wizard
+should own this choice and set the routing from it, rather than it being two settings you
+have to remember are coupled.
+
+**Steps it should walk through**, each verified before the next:
+
+1. **Online or in person**, which picks the audio topology above.
+2. **Load the audio graph**, and confirm the nodes exist.
+3. **Who is on the panel**, and which capture source each name belongs to — pick the name,
+   talk into the mic, watch which meter moves, confirm. This is the only reliable way to
+   map speakers to channels, and it is the step that produces per-speaker attribution.
+4. **Confirm Bubbles' voice reaches where it needs to go** — the virtual mic for online,
+   the default output for in person — by measuring it, not by asking whether it sounded right.
+5. **Model reachable, named model pulled, and warm.**
+6. **TTS answering, reference audio present, and warm.**
+7. **Rehearsal echo path off**, and monitoring set to match the venue.
+8. **A dry run**: trigger one real answer and watch it the whole way through.
+
+**Each step needs a remedy, not just a verdict.** A step that says "the audio graph is
+missing" and offers the button that builds it is worth ten that only report. The current
+checks do some of this; the wizard should do it everywhere.
+
+**Lessons already paid for, which the wizard exists to prevent:**
+
+- Device selection and speaker names were held in memory only, so any restart silently
+  reset the capture node to the configured default and threw the names away. That is
+  almost certainly why speaker attribution "didn't work on the night" — it worked, and
+  then something restarted. Now persisted, but the deeper point stands: setup state that
+  only exists in a running process is setup state you will lose at the worst moment.
+- Bubbles' voice going to a null sink means **hearing nothing is the correct behaviour**,
+  and is also the symptom of a completely dead TTS. Ambiguous silence is the enemy; every
+  such state needs to be stated out loud by the tool.
+- The room-microphone bug would have been caught in seconds by an amplitude check.
+
+**Shape.** The dashboard and the wizard are different jobs over the same checks and the
+same actions, so they should share them rather than becoming two codebases. Worth deciding
+whether the wizard is a mode of the existing web app or a separate flow that hands over to
+it once you are live. Razor Pages is a reasonable alternative to the current plain
+HTML/JS, and would be a better fit for a multi-step flow with server-held state.
 
 ### 10. Experimentation and test tooling
 
@@ -357,6 +429,25 @@ all connect at once with no code change. Worth testing rather than building.
   and its hand-drawn scene. If that holds it would collapse two codebases into one and
   potentially bring the real Lottie animations to Linux — which is the GTK build's biggest
   compromise. Worth a spike before investing further in `Bubbles.Gtk`.
+
+---
+
+### 12. Decide what Aspire is still for
+
+Aspire was brought in for two reasons: orchestrating the local setup, and hosting Foundry
+Local. Foundry Local was abandoned — it could not find the model, and Aspire would not use
+the cached one, which was too many papercuts for the value. And the setup problem is now
+being solved by item 9, in the app itself, where the knowledge about what "ready" means
+already lives.
+
+So the question is open: **what is Aspire still earning?** The honest answer today is the
+dashboard and the OpenTelemetry wiring, which item 1 depends on and item 8a wants on a
+second machine. That is a real benefit, but it is not the reason it was adopted.
+
+- Removing it would simplify running the thing on the night to "start the API".
+- Keeping it keeps the telemetry story that items 1 and 8a are built on.
+- Worth deciding deliberately rather than by drift, and worth doing **after** item 1,
+  since that is what will show whether the dashboard is actually being used.
 
 ---
 

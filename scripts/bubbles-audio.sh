@@ -17,6 +17,11 @@
 # Output side: a remapped source (not a raw monitor) so the browser device picker shows it
 # as a normal microphone called "Bubbles Mic".
 #
+# Note that this means you do NOT hear Bubbles locally: its voice goes into a null sink
+# whose only consumer is the virtual mic StreamYard reads. That is deliberate - it is the
+# same reason the hosts need their own loopback - but during setup it looks exactly like
+# the TTS being broken. `monitor on` adds a loopback so you can hear it.
+#
 # Usage:
 #   ./bubbles-audio.sh up            Create the graph (idempotent)
 #   ./bubbles-audio.sh down          Tear it down
@@ -25,6 +30,7 @@
 #   ./bubbles-audio.sh play FILE     Play a file into bubbles-tab-sink (fake remote hosts)
 #   ./bubbles-audio.sh echo on|off   Feed Bubbles' own voice back into the tab mix,
 #                                    simulating the StreamYard return path (see below)
+#   ./bubbles-audio.sh monitor on|off  Hear Bubbles yourself (see below)
 #
 # Env:
 #   MONITOR_SINK   Sink you listen on. Defaults to the current default sink,
@@ -238,6 +244,14 @@ cmd_status() {
     fi
 
     local echoes
+    monitors=$(pactl list short modules | grep "module-loopback" | grep "source=$VIRTUAL_MIC" | grep -vc "sink=$TAB_SINK" || true)
+    if [[ "${monitors:-0}" -gt 0 ]]; then
+        echo "  [ok]      you can hear Bubbles locally (monitor loopback loaded)"
+    else
+        echo "  [note]    you will NOT hear Bubbles locally - its voice only goes to $VIRTUAL_MIC."
+        echo "            That is correct for a live stream. './bubbles-audio.sh monitor on' to hear it."
+    fi
+
     echoes=$(pactl list short modules | grep -c "module-loopback.*source=$VIRTUAL_MIC .*sink=$TAB_SINK" || true)
     [[ "$echoes" -gt 0 ]] && echo "  [rehearsal] echo return path is ON — Bubbles hears itself (see 'echo off')"
 
@@ -342,6 +356,58 @@ cmd_echo() {
     esac
 }
 
+# You do not hear Bubbles by default: its voice goes to a null sink that only the virtual
+# mic reads. Silence is therefore the correct behaviour and the expected symptom of a
+# dozen different faults, which makes it a bad default while setting up. This loops the
+# virtual mic to your own output so you can hear what StreamYard will hear.
+cmd_monitor() {
+    require_tools
+    local mode="${1:-}"
+    local monitor_sink="${MONITOR_SINK:-$(pactl get-default-sink)}"
+
+    case "$mode" in
+        on)
+            source_exists "$VIRTUAL_MIC" || die "$VIRTUAL_MIC does not exist. Run './bubbles-audio.sh up' first."
+            if [[ "$monitor_sink" == "$TAB_SINK" || "$monitor_sink" == "$TTS_SINK" ]]; then
+                die "Default sink is '$monitor_sink', which is one of our null sinks. Set MONITOR_SINK to your real output device."
+            fi
+            if loopback_exists "$VIRTUAL_MIC" "$monitor_sink"; then
+                info "already monitoring Bubbles on $monitor_sink"
+                return
+            fi
+            # Sourced from the virtual mic rather than the TTS sink's monitor, so what you
+            # hear is literally the signal StreamYard receives rather than something that
+            # merely resembles it.
+            local id
+            id=$(pactl load-module module-loopback \
+                source="$VIRTUAL_MIC" \
+                sink="$monitor_sink" \
+                latency_msec=40 \
+                'sink_input_properties=media.name="Bubbles\ voice\ monitor"')
+            remember_module "$id"
+            info "monitoring ON: $VIRTUAL_MIC -> $monitor_sink (module $id)"
+            echo
+            echo "  You will now hear Bubbles. This is what StreamYard receives."
+            echo "  Turn it off before an in-person event, where the PA is already carrying it."
+            ;;
+        off)
+            local removed=0
+            while read -r id; do
+                [[ -z "$id" ]] && continue
+                pactl unload-module "$id" 2>/dev/null && removed=$((removed + 1)) || true
+            done < <(pactl list short modules \
+                        | grep "module-loopback" \
+                        | grep "source=$VIRTUAL_MIC" \
+                        | grep -v "sink=$TAB_SINK" \
+                        | awk '{print $1}')
+            info "monitoring OFF (removed $removed loopback(s))"
+            ;;
+        *)
+            die "usage: $0 monitor {on|off}   (output device via MONITOR_SINK)"
+            ;;
+    esac
+}
+
 case "${1:-}" in
     up)     cmd_up ;;
     down)   cmd_down ;;
@@ -349,8 +415,9 @@ case "${1:-}" in
     route)  cmd_route ;;
     play)   shift; cmd_play "$@" ;;
     echo)   shift; cmd_echo "$@" ;;
+    monitor) shift; cmd_monitor "$@" ;;
     *)
-        echo "Usage: $0 {up|down|status|route|play <file>|echo on|echo off}" >&2
+        echo "Usage: $0 {up|down|status|route|play <file>|echo on|echo off|monitor on|monitor off}" >&2
         exit 1
         ;;
 esac

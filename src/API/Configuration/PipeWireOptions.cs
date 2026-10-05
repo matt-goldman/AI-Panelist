@@ -24,6 +24,13 @@ public class PipeWireOptions
     public string? DefaultCaptureNode { get; set; }
 
     /// <summary>
+    /// The remapped source Bubbles' voice ends up on — what StreamYard picks as its
+    /// microphone, and created by bubbles-audio.sh. Only used for checking the output
+    /// path: audio is played to <see cref="OutputSink"/>, never to this.
+    /// </summary>
+    public string? VirtualMicSource { get; set; } = "bubbles-mic";
+
+    /// <summary>
     /// Latency requested from pw-cat for capture, e.g. "50ms" or "1024".
     /// </summary>
     public string CaptureLatency { get; set; } = "50ms";

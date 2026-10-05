@@ -54,6 +54,9 @@ builder.Services.AddSingleton<StreamingSpeechPipeline>();
 // both "is this node carrying anything?" and "which panelist is on which mic?".
 builder.Services.AddSingleton<CaptureLevelMonitor>();
 
+// Keeps the chosen capture devices and speaker names across a restart.
+builder.Services.AddSingleton<DeviceSelectionStore>();
+
 // Which displays are attached to the hub, so "is the tablet connected?" has an answer that
 // doesn't involve walking over to look at it.
 builder.Services.AddSingleton<DisplayRegistry>();
@@ -62,6 +65,7 @@ builder.Services.AddSingleton<DisplayRegistry>();
 builder.Services.Configure<SetupOptions>(
     builder.Configuration.GetSection(SetupOptions.SectionName));
 builder.Services.AddSingleton<SetupActions>();
+builder.Services.AddSingleton<SpeechOutputProbe>();
 builder.Services.AddSingleton<ReadinessService>();
 
 // Publish how loud Bubbles' speech is, so a display can drive a mouth from the real audio.
@@ -92,6 +96,9 @@ builder.Services.AddSingleton<TriggerPhraseMatcher>();
 builder.Services.Configure<TranscriptSearchOptions>(
     builder.Configuration.GetSection(TranscriptSearchOptions.SectionName));
 builder.Services.AddSingleton<PanelTranscriptLog>();
+
+// Whether the rolling summary is actually being produced - invisible otherwise.
+builder.Services.AddSingleton<SummaryHealth>();
 
 // Register transcript buffer service
 builder.Services.AddSingleton(sp =>
@@ -129,64 +136,28 @@ var chatClientDescription = (string?)null;
 switch (options.LlmServiceType?.ToLower())
 {
     case "chatclient":
-        var provider = builder.Configuration["ChatClient:Provider"]?.ToLower() ?? "ollama";
+        // Two clients, not one. Summaries and responses compete for the same GPU, and a
+        // summary generating hundreds of tokens owns it while a trigger waits behind.
+        // Giving summaries their own endpoint - a second box on the LAN, a smaller model,
+        // anything - removes the contention outright rather than mitigating it. Unset,
+        // both point at the same place and nothing changes.
+        var responseClient = BuildChatClient(builder, "ChatClient", out var responseDescription);
+        chatClientDescription = responseDescription;
 
-        // Under Aspire the model is already part of the injected connection string, so
-        // don't make it be configured twice.
-        var aspireOllama = builder.Configuration.GetConnectionString("responses");
-        var model = builder.Configuration["ChatClient:Model"]
-                    ?? ReadConnectionStringValue(aspireOllama, "Model")
-                    ?? throw new InvalidOperationException("ChatClient:Model must be set when LlmServiceType is 'ChatClient'.");
+        builder.Services.AddSingleton(responseClient);
 
-        switch (provider)
+        var summaryConfigured = builder.Configuration.GetSection("ChatClient:Summary").GetChildren()
+            .Any(c => !string.IsNullOrWhiteSpace(c.Value));
+
+        if (summaryConfigured)
         {
-            case "ollama":
-                // Prefer an explicit endpoint; otherwise use whatever Aspire injected for
-                // the "responses" resource, so this works both with a containerised Ollama
-                // started by the AppHost and with one you run yourself.
-                var ollamaEndpoint = builder.Configuration["ChatClient:Endpoint"]
-                                     ?? ResolveAspireOllamaEndpoint(aspireOllama)
-                                     ?? "http://localhost:11434";
-
-                chatClientDescription = $"Ollama {model} at {ollamaEndpoint}";
-                builder.Services.AddSingleton<IChatClient>(
-                    new OllamaSharp.OllamaApiClient(new Uri(ollamaEndpoint), model));
-                break;
-
-            case "openai":
-                // Also covers any OpenAI-compatible endpoint (a local vLLM, a gateway, and
-                // so on) via ChatClient:Endpoint.
-                var apiKey = builder.Configuration["ChatClient:ApiKey"]
-                             ?? throw new InvalidOperationException("ChatClient:ApiKey must be set for the OpenAI provider. Use user-secrets, not appsettings.");
-                var openAiOptions = new OpenAI.OpenAIClientOptions();
-                if (builder.Configuration["ChatClient:Endpoint"] is { Length: > 0 } customEndpoint)
-                {
-                    openAiOptions.Endpoint = new Uri(customEndpoint);
-                }
-
-                chatClientDescription = $"OpenAI {model} at {openAiOptions.Endpoint?.ToString() ?? "api.openai.com"}";
-                builder.Services.AddSingleton<IChatClient>(
-                    new OpenAI.OpenAIClient(new System.ClientModel.ApiKeyCredential(apiKey), openAiOptions)
-                        .GetChatClient(model)
-                        .AsIChatClient());
-                break;
-
-            case "azureaiinference":
-                var azureEndpoint = builder.Configuration["ChatClient:Endpoint"]
-                                    ?? throw new InvalidOperationException("ChatClient:Endpoint must be set for the Azure AI Inference provider.");
-                var azureKey = builder.Configuration["ChatClient:ApiKey"]
-                               ?? throw new InvalidOperationException("ChatClient:ApiKey must be set for the Azure AI Inference provider.");
-
-                chatClientDescription = $"Azure AI Inference {model} at {azureEndpoint}";
-                builder.Services.AddSingleton<IChatClient>(
-                    new Azure.AI.Inference.ChatCompletionsClient(
-                            new Uri(azureEndpoint), new Azure.AzureKeyCredential(azureKey))
-                        .AsIChatClient(model));
-                break;
-
-            default:
-                throw new InvalidOperationException(
-                    $"Unknown ChatClient:Provider '{provider}'. Expected 'Ollama', 'OpenAI' or 'AzureAIInference'.");
+            var summaryClient = BuildChatClient(builder, "ChatClient:Summary", out var summaryDescription, "ChatClient");
+            chatClientDescription += $"; summaries on {summaryDescription}";
+            builder.Services.AddKeyedSingleton(ChatClientLanguageModelService.SummaryClientKey, summaryClient);
+        }
+        else
+        {
+            builder.Services.AddKeyedSingleton(ChatClientLanguageModelService.SummaryClientKey, responseClient);
         }
 
         builder.Services.AddSingleton<ILanguageModelService, ChatClientLanguageModelService>();
@@ -453,6 +424,76 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 app.Run();
+
+/// <summary>
+/// Build one IChatClient from a configuration section, falling back to <paramref name="fallbackSection"/>
+/// for anything the section does not set. This is what lets summaries and responses run on
+/// different endpoints without duplicating every setting.
+/// </summary>
+static IChatClient BuildChatClient(
+    WebApplicationBuilder builder,
+    string section,
+    out string description,
+    string? fallbackSection = null)
+{
+    string? Setting(string key) =>
+        builder.Configuration[$"{section}:{key}"]
+        ?? (fallbackSection is null ? null : builder.Configuration[$"{fallbackSection}:{key}"]);
+
+    var provider = Setting("Provider")?.ToLower() ?? "ollama";
+
+    // Under Aspire the model is already part of the injected connection string, so
+    // don't make it be configured twice.
+    var aspireOllama = builder.Configuration.GetConnectionString("responses");
+    var model = Setting("Model")
+                ?? ReadConnectionStringValue(aspireOllama, "Model")
+                ?? throw new InvalidOperationException($"{section}:Model must be set when LlmServiceType is 'ChatClient'.");
+
+    switch (provider)
+    {
+        case "ollama":
+            // Prefer an explicit endpoint; otherwise use whatever Aspire injected for
+            // the "responses" resource, so this works both with a containerised Ollama
+            // started by the AppHost and with one you run yourself.
+            var ollamaEndpoint = Setting("Endpoint")
+                                 ?? ResolveAspireOllamaEndpoint(aspireOllama)
+                                 ?? "http://localhost:11434";
+
+            description = $"Ollama {model} at {ollamaEndpoint}";
+            return new OllamaSharp.OllamaApiClient(new Uri(ollamaEndpoint), model);
+
+        case "openai":
+            // Also covers any OpenAI-compatible endpoint (a local vLLM, a llama.cpp
+            // server, a gateway) via Endpoint.
+            var apiKey = Setting("ApiKey")
+                         ?? throw new InvalidOperationException($"{section}:ApiKey must be set for the OpenAI provider. Use user-secrets, not appsettings.");
+            var openAiOptions = new OpenAI.OpenAIClientOptions();
+            if (Setting("Endpoint") is { Length: > 0 } customEndpoint)
+            {
+                openAiOptions.Endpoint = new Uri(customEndpoint);
+            }
+
+            description = $"OpenAI {model} at {openAiOptions.Endpoint?.ToString() ?? "api.openai.com"}";
+            return new OpenAI.OpenAIClient(new System.ClientModel.ApiKeyCredential(apiKey), openAiOptions)
+                .GetChatClient(model)
+                .AsIChatClient();
+
+        case "azureaiinference":
+            var azureEndpoint = Setting("Endpoint")
+                                ?? throw new InvalidOperationException($"{section}:Endpoint must be set for the Azure AI Inference provider.");
+            var azureKey = Setting("ApiKey")
+                           ?? throw new InvalidOperationException($"{section}:ApiKey must be set for the Azure AI Inference provider.");
+
+            description = $"Azure AI Inference {model} at {azureEndpoint}";
+            return new Azure.AI.Inference.ChatCompletionsClient(
+                    new Uri(azureEndpoint), new Azure.AzureKeyCredential(azureKey))
+                .AsIChatClient(model);
+
+        default:
+            throw new InvalidOperationException(
+                $"Unknown {section}:Provider '{provider}'. Expected 'Ollama', 'OpenAI' or 'AzureAIInference'.");
+    }
+}
 
 /// <summary>
 /// Pull a base URL out of the connection string Aspire injects for the Ollama resource.

@@ -15,7 +15,11 @@ public interface ILanguageModelService
     /// <summary>
     /// Generate a conversational response based on summary and recent transcript
     /// </summary>
-    Task<string> GenerateResponseAsync(string summary, string recentTranscript, CancellationToken cancellationToken = default);
+    Task<string> GenerateResponseAsync(
+        string summary,
+        string recentTranscript,
+        string question,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Stream a conversational response as it is generated.
@@ -33,9 +37,10 @@ public interface ILanguageModelService
     async IAsyncEnumerable<string> StreamResponseAsync(
         string summary,
         string recentTranscript,
+        string question,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        yield return await GenerateResponseAsync(summary, recentTranscript, cancellationToken);
+        yield return await GenerateResponseAsync(summary, recentTranscript, question, cancellationToken);
     }
 
     /// <summary>

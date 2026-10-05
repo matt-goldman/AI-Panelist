@@ -20,6 +20,16 @@ public class AIPanelistOptions
     public int SummaryIntervalSeconds { get; set; } = 45;
 
     /// <summary>
+    /// How long after a response finishes before summarising may start again.
+    ///
+    /// One model on one GPU: a summary generating hundreds of tokens owns the card, and a
+    /// trigger landing behind it waits. Skipping only while a response is "in progress"
+    /// was not enough, because the tail of a response — audio still draining — is exactly
+    /// when the next question gets asked.
+    /// </summary>
+    public int SummaryCooldownSeconds { get; set; } = 15;
+
+    /// <summary>
     /// Maximum response length in words (default: 150)
     /// </summary>
     public int MaxResponseWords { get; set; } = 150;
@@ -38,6 +48,13 @@ public class AIPanelistOptions
     /// Introductory phrase for the AI panelist
     /// </summary>
     public string IntroPhrase { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Where the chosen capture devices and speaker names are kept between runs. Left
+    /// unset, they go under the user's local application data. Delete the file to start
+    /// a run with nothing selected.
+    /// </summary>
+    public string? DeviceSelectionPath { get; set; }
 
     /// <summary>
     /// STT service implementation type (Mock, Whisper)

@@ -5,6 +5,7 @@ using System.Text;
 using API.Configuration;
 using API.Services.Interfaces;
 using Microsoft.Extensions.AI;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using OllamaSharp;
 using OllamaSharp.Models;
@@ -35,15 +36,24 @@ public class ChatClientLanguageModelService : ILanguageModelService
 {
     private const string SearchToolName = "search_panel_transcript";
 
-    private static readonly ChatOptions SummaryOptions = new()
+    /// <summary>
+    /// DI key for the client summaries run on. Usually the same instance as the response
+    /// client; pointed somewhere else, summarising stops competing with answering.
+    /// </summary>
+    public const string SummaryClientKey = "summary";
+
+    // Reasoning off. Summarising a transcript into bullets does not need a chain of
+    // thought, and every reasoning token is GPU time a response might be queued behind.
+    private static readonly ChatOptions SummaryOptions = new ChatOptions
     {
         Temperature     = 0.3f, // Focused and deterministic for summarization
         TopP            = 0.8f,
         MaxOutputTokens = 500
-    };
+    }.AddOllamaOption(OllamaOption.Think, false);
 
     private readonly ILogger<ChatClientLanguageModelService> _logger;
     private readonly IChatClient _chatClient;
+    private readonly IChatClient _summaryClient;
     private readonly IChatClient _responseClient;
     private readonly PromptService _promptService;
     private readonly PanelTranscriptLog _transcriptLog;
@@ -54,6 +64,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
         ILogger<ChatClientLanguageModelService> logger,
         ILoggerFactory loggerFactory,
         IChatClient chatClient,
+        [FromKeyedServices(SummaryClientKey)] IChatClient summaryClient,
         PromptService promptService,
         PanelTranscriptLog transcriptLog,
         IOptions<TranscriptSearchOptions> searchOptions,
@@ -61,6 +72,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
     {
         _logger = logger;
         _chatClient = chatClient;
+        _summaryClient = summaryClient;
         _promptService = promptService;
         _transcriptLog = transcriptLog;
         _searchOptions = searchOptions.Value;
@@ -83,7 +95,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
         _logger.LogInformation("Generating summary for {Length} character transcript", transcript.Length);
 
         var prompt = _promptService.BuildSummarizationPrompt(transcript);
-        var response = await _chatClient.GetResponseAsync(prompt, SummaryOptions, cancellationToken);
+        var response = await _summaryClient.GetResponseAsync(prompt, SummaryOptions, cancellationToken);
 
         var summary = ExtractAnswerText(response.Messages.SelectMany(m => m.Contents));
         _logger.LogDebug("Generated summary: {Summary}", summary);
@@ -94,12 +106,13 @@ public class ChatClientLanguageModelService : ILanguageModelService
     public async Task<string> GenerateResponseAsync(
         string summary,
         string recentTranscript,
+        string question,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Generating response (non-streaming)");
 
         var response = await _responseClient.GetResponseAsync(
-            BuildResponseMessages(summary, recentTranscript, triage: false),
+            BuildResponseMessages(summary, recentTranscript, question, triage: false),
             CreateResponseOptions(CreateSearchTools()),
             cancellationToken);
 
@@ -112,6 +125,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
     public async IAsyncEnumerable<string> StreamResponseAsync(
         string summary,
         string recentTranscript,
+        string question,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         // Shared by both triage passes, so the search limit is per answer, not per pass.
@@ -122,7 +136,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
             _logger.LogInformation("Streaming response");
 
             await foreach (var text in StreamPassAsync(
-                BuildResponseMessages(summary, recentTranscript, triage: false),
+                BuildResponseMessages(summary, recentTranscript, question, triage: false),
                 CreateResponseOptions(tools), "response", cancellationToken))
             {
                 yield return text;
@@ -141,7 +155,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
         // pass starts, rather than when this whole method finishes.
         {
             await using var triage = StreamPassAsync(
-                    BuildResponseMessages(summary, recentTranscript, triage: true),
+                    BuildResponseMessages(summary, recentTranscript, question, triage: true),
                     CreateResponseOptions(tools, think: false), "triage", cancellationToken)
                 .GetAsyncEnumerator(cancellationToken);
 
@@ -191,7 +205,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
         yield return holdingLine;
         yield return ResponseChunker.Flush;
 
-        var messages = BuildResponseMessages(summary, recentTranscript, triage: false);
+        var messages = BuildResponseMessages(summary, recentTranscript, question, triage: false);
         messages.Add(new ChatMessage(ChatRole.Assistant, holdingLine));
         messages.Add(new ChatMessage(ChatRole.User, _triageOptions.ContinuePrompt));
 
@@ -394,7 +408,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
         return line.Length > 0 ? line : _triageOptions.DefaultHoldingLine;
     }
 
-    private List<ChatMessage> BuildResponseMessages(string summary, string recentTranscript, bool triage)
+    private List<ChatMessage> BuildResponseMessages(string summary, string recentTranscript, string question, bool triage)
     {
         var messages = new List<ChatMessage>();
 
@@ -409,7 +423,7 @@ public class ChatClientLanguageModelService : ILanguageModelService
             messages.Add(new ChatMessage(ChatRole.System, string.Join("\n\n", system)));
         }
 
-        var prompt = _promptService.BuildResponsePrompt(summary, recentTranscript);
+        var prompt = _promptService.BuildResponsePrompt(summary, recentTranscript, question);
 
         // Last in the prompt, not in a system message: behind the long panelist prompt a
         // system instruction was ignored outright in testing - the model never once asked

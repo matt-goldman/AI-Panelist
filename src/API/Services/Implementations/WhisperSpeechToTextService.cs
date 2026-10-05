@@ -34,6 +34,12 @@ public class WhisperSpeechToTextService(
     private CancellationTokenSource? _cts;
 
     /// <summary>
+    /// Serialises starting, stopping and re-selecting, so a device change part way through
+    /// startup can't leave two sets of captures running on the same nodes.
+    /// </summary>
+    private readonly SemaphoreSlim _captureLock = new(1, 1);
+
+    /// <summary>
     /// Held while transcription is "paused" via the ISpeechToTextService API. Pausing is
     /// the same mechanism as TTS self-suppression, just without an automatic end.
     /// </summary>
@@ -45,6 +51,10 @@ public class WhisperSpeechToTextService(
     {
         _logger.LogInformation("Starting Whisper transcription");
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        // Picking a microphone on the setup page has to take effect there and then.
+        audioDeviceService.SelectionChanged -= OnSelectionChanged;
+        audioDeviceService.SelectionChanged += OnSelectionChanged;
 
         try
         {
@@ -73,20 +83,7 @@ public class WhisperSpeechToTextService(
                 return;
             }
 
-            _logger.LogInformation("Starting audio capture from {Count} device(s)", selectedDevices.Count);
-
-            // Start capture and transcription for each device
-            foreach (var device in selectedDevices)
-            {
-                var capture = new DeviceCapture(
-                    device, captureFactory, _whisperFactory, suppressionGate,
-                    suppressionOptions.Value, transcriptionOptions.Value, _logger,
-                    CreateTriggerListener(device), levelMonitor);
-                capture.TranscriptionReceived += OnDeviceTranscriptionReceived;
-                _deviceCaptures.Add(capture);
-
-                await capture.StartAsync(_cts.Token);
-            }
+            await StartCapturesAsync(selectedDevices, _cts.Token);
 
             _logger.LogInformation("Whisper transcription started successfully on {Count} device(s)",
                 _deviceCaptures.Count);
@@ -95,6 +92,106 @@ public class WhisperSpeechToTextService(
         {
             _logger.LogError(ex, "Failed to start Whisper transcription");
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Start one capture per selected device. The caller holds <see cref="_captureLock"/>
+    /// or is still in startup.
+    /// </summary>
+    private async Task StartCapturesAsync(List<AudioDeviceInfo> devices, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Starting audio capture from {Count} device(s): {Devices}",
+            devices.Count, string.Join(", ", devices.Select(d => d.EffectiveName)));
+
+        foreach (var device in devices)
+        {
+            var capture = new DeviceCapture(
+                device, captureFactory, _whisperFactory!, suppressionGate,
+                suppressionOptions.Value, transcriptionOptions.Value, _logger,
+                CreateTriggerListener(device), levelMonitor);
+            capture.TranscriptionReceived += OnDeviceTranscriptionReceived;
+            _deviceCaptures.Add(capture);
+
+            try
+            {
+                await capture.StartAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                // One bad node must not cost us the others. Losing the moderator's
+                // microphone because a monitor source vanished is not a trade worth making.
+                _logger.LogError(ex, "Couldn't start capture on {DeviceName}; continuing without it",
+                    device.EffectiveName);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tear down every running capture.
+    /// </summary>
+    private async Task StopCapturesAsync()
+    {
+        foreach (var capture in _deviceCaptures)
+        {
+            await capture.StopAsync();
+            capture.TranscriptionReceived -= OnDeviceTranscriptionReceived;
+            capture.Dispose();
+        }
+
+        _deviceCaptures.Clear();
+
+        // A meter still showing the last reading from a device no longer being captured is
+        // worse than an empty one.
+        levelMonitor.Clear();
+    }
+
+    private async void OnSelectionChanged(object? sender, EventArgs e)
+    {
+        try
+        {
+            await RestartCapturesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Couldn't apply the new device selection");
+        }
+    }
+
+    /// <summary>
+    /// Swap to the currently selected devices without interrupting transcription as a
+    /// whole. Capture is cheap to restart; what it must never do is silently keep reading
+    /// the old nodes.
+    /// </summary>
+    private async Task RestartCapturesAsync()
+    {
+        if (_whisperFactory is null || _cts is null) return;
+
+        await _captureLock.WaitAsync();
+        try
+        {
+            if (_whisperFactory is null || _cts is null || _cts.IsCancellationRequested) return;
+
+            var devices = audioDeviceService.GetSelectedInputDevices();
+            var before = _deviceCaptures.Select(c => c.DeviceId).ToList();
+            var after = devices.Select(d => d.Id).ToList();
+
+            if (before.Count == after.Count && before.All(after.Contains))
+            {
+                _logger.LogDebug("Device selection changed but the capture set is the same; leaving capture alone");
+                return;
+            }
+
+            _logger.LogInformation("Device selection changed: capturing {After} instead of {Before}",
+                after.Count == 0 ? "nothing" : string.Join(", ", after),
+                before.Count == 0 ? "nothing" : string.Join(", ", before));
+
+            await StopCapturesAsync();
+            await StartCapturesAsync(devices, _cts.Token);
+        }
+        finally
+        {
+            _captureLock.Release();
         }
     }
 
@@ -108,23 +205,22 @@ public class WhisperSpeechToTextService(
     {
         _logger.LogInformation("Stopping Whisper transcription");
 
+        audioDeviceService.SelectionChanged -= OnSelectionChanged;
+
         if (_cts is not null)
         {
             await _cts.CancelAsync();
         }
 
-        // Stop all device captures
-        foreach (var capture in _deviceCaptures)
+        await _captureLock.WaitAsync();
+        try
         {
-            await capture.StopAsync();
-            capture.TranscriptionReceived -= OnDeviceTranscriptionReceived;
-            capture.Dispose();
+            await StopCapturesAsync();
         }
-        _deviceCaptures.Clear();
-
-        // A level meter left showing the last reading from a device no longer being
-        // captured is worse than an empty one.
-        levelMonitor.Clear();
+        finally
+        {
+            _captureLock.Release();
+        }
 
         _logger.LogInformation("Whisper transcription stopped");
     }
@@ -213,6 +309,7 @@ public class WhisperSpeechToTextService(
 
     public void Dispose()
     {
+        audioDeviceService.SelectionChanged -= OnSelectionChanged;
         _manualSuppression?.Dispose();
 
         foreach (var capture in _deviceCaptures)
@@ -222,6 +319,7 @@ public class WhisperSpeechToTextService(
         _deviceCaptures.Clear();
 
         _cts?.Dispose();
+        _captureLock.Dispose();
         _whisperFactory?.Dispose();
     }
 
@@ -246,11 +344,21 @@ public class WhisperSpeechToTextService(
         private IAudioCaptureSource? _capture;
         private WhisperProcessor? _processor;
         private Task? _transcriptionTask;
+
+        /// <summary>
+        /// This capture's own cancellation, linked to the service's. Without it, stopping
+        /// one device would wait on a loop that only ends when the whole service does — so
+        /// swapping devices hung instead of swapping.
+        /// </summary>
+        private CancellationTokenSource? _cts;
         private readonly Queue<AudioBlock> _blocks = new();
         private readonly Lock _bufferLock = new();
         private int _bufferedSamples;
 
         public event EventHandler<TranscriptionReceivedEventArgs>? TranscriptionReceived;
+
+        /// <summary>Which node this capture is reading, for comparing selections.</summary>
+        public string DeviceId => device.Id;
 
         public async Task StartAsync(CancellationToken cancellationToken)
         {
@@ -260,18 +368,27 @@ public class WhisperSpeechToTextService(
                 .WithPrompt("This is a technology panel discussion.")
                 .Build();
 
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var token = _cts.Token;
+
             _capture = captureFactory.Create(device);
             _capture.SamplesAvailable += OnSamplesAvailable;
-            await _capture.StartAsync(cancellationToken);
+            await _capture.StartAsync(token);
 
-            triggerListener?.Start(cancellationToken);
+            triggerListener?.Start(token);
 
             // Start transcription loop for this device
-            _transcriptionTask = Task.Run(() => TranscriptionLoopAsync(cancellationToken), cancellationToken);
+            _transcriptionTask = Task.Run(() => TranscriptionLoopAsync(token), token);
         }
 
         public async Task StopAsync()
         {
+            // Ends this device's loops without waiting for the whole service to shut down.
+            if (_cts is not null)
+            {
+                await _cts.CancelAsync();
+            }
+
             if (_capture is not null)
             {
                 _capture.SamplesAvailable -= OnSamplesAvailable;
@@ -290,6 +407,8 @@ public class WhisperSpeechToTextService(
                 {
                     // Expected
                 }
+
+                _transcriptionTask = null;
             }
 
             if (triggerListener is not null)
@@ -360,8 +479,15 @@ public class WhisperSpeechToTextService(
         }
 
         /// <summary>
-        /// Take up to one segment's worth of buffered blocks. Blocks are taken whole —
-        /// they are only 100ms each, which is far finer than the suppression tail.
+        /// Take up to one segment's worth of buffered blocks, cutting at a pause rather
+        /// than at a fixed boundary.
+        ///
+        /// A hard cut lands mid-word, and Whisper given a fragment that starts mid-word
+        /// does not report a fragment — it invents a plausible beginning. "I just want to
+        /// know if you're happy to be on this panel" came back as "I hope you found this
+        /// panel", which then went to the model as though it were what was said. Cutting
+        /// where the speaker was briefly quiet costs nothing and removes the whole class
+        /// of error.
         /// </summary>
         private List<AudioBlock> DrainSegment()
         {
@@ -371,17 +497,68 @@ public class WhisperSpeechToTextService(
             {
                 if (_bufferedSamples < SegmentSamples / 2) return drained; // Wait for more data
 
+                var candidates = new List<AudioBlock>();
                 var taken = 0;
-                while (_blocks.Count > 0 && taken < SegmentSamples)
+
+                foreach (var block in _blocks)
+                {
+                    if (taken >= SegmentSamples) break;
+                    candidates.Add(block);
+                    taken += block.Samples.Length;
+                }
+
+                var count = BlocksEndingAtAPause(candidates);
+
+                for (var i = 0; i < count; i++)
                 {
                     var block = _blocks.Dequeue();
                     _bufferedSamples -= block.Samples.Length;
-                    taken += block.Samples.Length;
                     drained.Add(block);
                 }
             }
 
             return drained;
+        }
+
+        /// <summary>
+        /// How many of <paramref name="candidates"/> to take so the cut lands in a quiet
+        /// block. Falls back to all of them when the speaker never pauses, because a
+        /// late transcript is worse than an imperfect one.
+        /// </summary>
+        private int BlocksEndingAtAPause(List<AudioBlock> candidates)
+        {
+            if (candidates.Count == 0) return 0;
+
+            // Never give back so much that we keep re-examining the same audio: at least
+            // this much of the segment is always consumed.
+            var minimumSamples = (int)(IAudioCaptureFactory.SampleRate * suppressionOptions.MinimumSegmentSeconds);
+            var floor = 0;
+            var running = 0;
+
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                running += candidates[i].Samples.Length;
+                if (running >= minimumSamples) { floor = i + 1; break; }
+            }
+
+            if (floor == 0) return candidates.Count;
+
+            for (var i = candidates.Count - 1; i >= floor; i--)
+            {
+                if (IsQuiet(candidates[i])) return i + 1;
+            }
+
+            // Continuous speech right across the window: cut anyway.
+            return candidates.Count;
+        }
+
+        private bool IsQuiet(AudioBlock block)
+        {
+            double sumOfSquares = 0;
+            foreach (var sample in block.Samples) sumOfSquares += sample * (double)sample;
+
+            var rms = Math.Sqrt(sumOfSquares / Math.Max(1, block.Samples.Length));
+            return rms < transcriptionOptions.SilenceRmsThreshold;
         }
 
         private async Task TranscribeAsync(List<AudioBlock> run, CancellationToken cancellationToken)
@@ -437,6 +614,7 @@ public class WhisperSpeechToTextService(
 
         public void Dispose()
         {
+            _cts?.Dispose();
             _capture?.Dispose();
             _processor?.Dispose();
             triggerListener?.Dispose();

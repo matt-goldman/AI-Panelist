@@ -18,7 +18,8 @@ public class PromptConfiguration
     public string SummarizationPromptTemplate { get; set; } = DefaultSummarizationPromptTemplate;
 
     /// <summary>
-    /// The prompt template for generating responses. Use {systemPrompt}, {summary}, {recentTranscript} as placeholders.
+    /// The prompt template for generating responses. Use {systemPrompt}, {summary},
+    /// {recentTranscript} and {question} as placeholders.
     /// </summary>
     public string ResponsePromptTemplate { get; set; } = DefaultResponsePromptTemplate;
 
@@ -70,8 +71,13 @@ public class PromptConfiguration
         Current discussion summary:
         {summary}
 
-        Recent transcript excerpt:
+        Recent transcript excerpt (for context - some of this you have already responded to):
         {recentTranscript}
+
+        THIS is what has been said since you last spoke, and what you are being asked to respond to now:
+        {question}
+
+        Respond to that, not to anything earlier in the transcript. If several things were said, answer the most recent question.
 
         Generate a conversational response. IMPORTANT: Keep your response under {maxWords} words - this is a hard limit as your response will be spoken aloud. Be concise and get to the point quickly.
 

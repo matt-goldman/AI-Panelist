@@ -30,14 +30,24 @@ public class PromptService
     }
 
     /// <summary>
-    /// Builds a response generation prompt using the summary and recent transcript
+    /// Builds a response generation prompt.
     /// </summary>
-    public string BuildResponsePrompt(string summary, string recentTranscript)
+    /// <param name="question">
+    /// What has been said since Bubbles last spoke. Without this the model sees a minute of
+    /// transcript containing several questions, no record of which it has already answered
+    /// — its own replies are kept out of the captured audio by self-suppression — and picks
+    /// one more or less at random. In testing it answered the previous question while the
+    /// new one sat two lines below.
+    /// </param>
+    public string BuildResponsePrompt(string summary, string recentTranscript, string question = "")
     {
         return _config.ResponsePromptTemplate
             .Replace("{systemPrompt}", _config.SystemPrompt)
-            .Replace("{summary}", summary)
+            .Replace("{summary}", string.IsNullOrWhiteSpace(summary) ? "(none yet)" : summary)
             .Replace("{recentTranscript}", recentTranscript)
+            .Replace("{question}", string.IsNullOrWhiteSpace(question)
+                ? "(nothing new since you last spoke - respond to the most recent thing above)"
+                : question)
             .Replace("{maxWords}", _config.MaxResponseWords.ToString());
     }
 }

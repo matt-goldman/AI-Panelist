@@ -61,22 +61,44 @@ public static class SetupEndpoints
     private static async Task<IResult> TestSpeechAsync(
         TestSpeechRequest? request,
         AIPanelistOrchestrator orchestrator,
+        SpeechOutputProbe probe,
         DisplayRegistry displays,
         CancellationToken cancellationToken)
     {
         var text = string.IsNullOrWhiteSpace(request?.Text) ? TestSpeechRequest.Default : request!.Text!;
-        var failure = await orchestrator.SpeakTestLineAsync(text, cancellationToken);
 
-        return failure is null
-            ? Results.Ok(new
-            {
-                message = displays.Count > 0
-                    ? $"Spoken. Watch the {displays.Count} connected display(s): the mouth should have moved with it."
-                    : "Spoken, but no display is connected to watch it.",
-                text,
-                displays = displays.Count
-            })
-            : Results.BadRequest(new { message = failure, text });
+        string? failure = null;
+        var level = await probe.MeasureDuringAsync(
+            async token => failure = await orchestrator.SpeakTestLineAsync(text, token),
+            cancellationToken);
+
+        if (failure is not null)
+        {
+            return Results.BadRequest(new { message = failure, text });
+        }
+
+        // Where the audio went matters more than that it played. Bubbles' voice goes to a
+        // null sink, so hearing nothing locally is correct, and saying so here is the
+        // difference between a working setup and twenty minutes of debugging.
+        var message = level is null
+            ? "Spoken."
+            : level.HeardSomething
+                ? $"Spoken, and heard on {level.Node} at peak {level.Peak:F2}. That is the signal the stream receives."
+                : $"Spoken, but {level.Node} stayed silent (peak {level.Peak:F3}) - the audio is not reaching the stream.";
+
+        message += displays.Count > 0
+            ? $" The mouth should have moved on {displays.Count} display(s)."
+            : " No display is connected to watch it.";
+
+        return Results.Ok(new
+        {
+            message,
+            text,
+            displays = displays.Count,
+            heard = level?.HeardSomething,
+            peak = level?.Peak,
+            node = level?.Node
+        });
     }
 
     private static IResult GetActions(IOptions<SetupOptions> options)

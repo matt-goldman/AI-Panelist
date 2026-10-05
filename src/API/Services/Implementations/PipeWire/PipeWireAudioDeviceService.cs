@@ -15,17 +15,53 @@ namespace API.Services.Implementations.PipeWire;
 /// app is running. Device IDs are PipeWire <c>node.name</c> values, which are stable
 /// across restarts — indexes are not.
 /// </summary>
-public class PipeWireAudioDeviceService(
-    ILogger<PipeWireAudioDeviceService> logger,
-    IOptions<PipeWireOptions> options) : IAudioDeviceService
+public class PipeWireAudioDeviceService : IAudioDeviceService
 {
-    private readonly PipeWireOptions _options = options.Value;
-    private readonly Dictionary<string, string> _displayNames = [];
-    private readonly Dictionary<string, bool> _enabledStates = [];
+    private readonly ILogger<PipeWireAudioDeviceService> logger;
+    private readonly PipeWireOptions _options;
+    private readonly DeviceSelectionStore _store;
+    private readonly Dictionary<string, string> _displayNames;
+    private readonly Dictionary<string, bool> _enabledStates;
     private readonly Lock _sync = new();
 
-    private List<string> _selectedIds = [];
+    private List<string> _selectedIds;
     private List<AudioDeviceInfo> _lastEnumerated = [];
+
+    public event EventHandler? SelectionChanged;
+
+    public PipeWireAudioDeviceService(
+        ILogger<PipeWireAudioDeviceService> logger,
+        IOptions<PipeWireOptions> options,
+        DeviceSelectionStore store)
+    {
+        this.logger = logger;
+        _options = options.Value;
+        _store = store;
+
+        // Restored rather than reset: a restart used to silently drop back to the
+        // configured capture node and lose every speaker name.
+        var saved = store.Load();
+        _selectedIds = saved.SelectedIds;
+        _displayNames = saved.DisplayNames;
+        _enabledStates = saved.EnabledStates;
+    }
+
+    /// <summary>
+    /// Write the current setup out. Called after anything the Inputs page can change.
+    /// </summary>
+    private void Persist()
+    {
+        DeviceSelection snapshot;
+        lock (_sync)
+        {
+            snapshot = new DeviceSelection(
+                [.. _selectedIds],
+                new Dictionary<string, string>(_displayNames),
+                new Dictionary<string, bool>(_enabledStates));
+        }
+
+        _store.Save(snapshot);
+    }
 
     public async Task<List<AudioDeviceInfo>> GetInputDevicesAsync()
     {
@@ -79,7 +115,13 @@ public class PipeWireAudioDeviceService(
                 return [];
             }
 
-            logger.LogInformation("No device selected, defaulting to {Node}", fallback.Id);
+            // Worth saying loudly: in a room, the configured capture node is the browser
+            // tab's sink, which nothing is feeding, and the symptom is Bubbles hearing
+            // nothing at all.
+            logger.LogWarning(
+                "No capture device has been chosen, so falling back to {Node}. "
+                + "If this is an in-person event, pick the microphones on the setup page.",
+                fallback.Id);
             ids = [fallback.Id];
         }
 
@@ -116,8 +158,12 @@ public class PipeWireAudioDeviceService(
             _selectedIds = matched;
         }
 
+        Persist();
+
         logger.LogInformation("Selected {Count} of {Requested} PipeWire capture nodes: {Nodes}",
             matched.Count, requested.Count, string.Join(", ", matched));
+
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
 
         return matched;
     }
@@ -136,6 +182,8 @@ public class PipeWireAudioDeviceService(
             }
         }
 
+        Persist();
+
         logger.LogInformation("Display name for {DeviceId} set to '{DisplayName}'", deviceId, displayName);
         return Task.FromResult(true);
     }
@@ -147,7 +195,13 @@ public class PipeWireAudioDeviceService(
             _enabledStates[deviceId] = isEnabled;
         }
 
+        Persist();
+
         logger.LogInformation("Device {DeviceId} enabled state set to {IsEnabled}", deviceId, isEnabled);
+
+        // A disabled device must stop being captured, not merely stop being listed.
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+
         return Task.FromResult(true);
     }
 
@@ -187,6 +241,13 @@ public class PipeWireAudioDeviceService(
 
         var defaultSource = await GetDefaultSourceAsync();
 
+        // pactl's JSON writer cannot emit non-ASCII: a RØDE comes back with its
+        // description as the literal "(null)". The plain text listing renders it fine, so
+        // it is read as a fallback rather than showing the operator a node id where a
+        // device name should be - which is exactly the moment you are trying to work out
+        // which microphone is which.
+        var descriptions = await DescriptionsFromTextAsync();
+
         try
         {
             using var document = JsonDocument.Parse(json);
@@ -206,7 +267,7 @@ public class PipeWireAudioDeviceService(
                 devices.Add(new AudioDeviceInfo
                 {
                     Id        = nodeName,
-                    Name      = DescribeSource(element, nodeName),
+                    Name      = DescribeSource(element, nodeName, descriptions),
                     IsDefault = nodeName == defaultSource
                 });
             }
@@ -222,21 +283,59 @@ public class PipeWireAudioDeviceService(
     }
 
     /// <summary>
-    /// pactl reports "(null)" descriptions for some devices, so fall back to the
-    /// node name rather than showing the moderator a list of "(null)" entries.
+    /// The device's name as a human would recognise it: the JSON description, else the one
+    /// from the text listing, else the node id.
     /// </summary>
-    private static string DescribeSource(JsonElement element, string nodeName)
+    private static string DescribeSource(JsonElement element, string nodeName, IReadOnlyDictionary<string, string> fallbacks)
     {
         if (element.TryGetProperty("description", out var descriptionElement))
         {
             var description = descriptionElement.GetString();
-            if (!string.IsNullOrWhiteSpace(description) && description != "(null)")
-            {
-                return description;
-            }
+            if (IsUsable(description)) return description!;
         }
 
-        return nodeName;
+        return fallbacks.TryGetValue(nodeName, out var fromText) && IsUsable(fromText) ? fromText : nodeName;
+
+        static bool IsUsable(string? value) => !string.IsNullOrWhiteSpace(value) && value != "(null)";
+    }
+
+    /// <summary>
+    /// Node name to description, read from `pactl list sources`, which unlike the JSON
+    /// output copes with non-ASCII device names.
+    /// </summary>
+    private async Task<Dictionary<string, string>> DescriptionsFromTextAsync()
+    {
+        var descriptions = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        try
+        {
+            var (exitCode, stdOut, _) = await PipeWireCli.RunAsync("pactl", ["list", "sources"]);
+            if (exitCode != 0) return descriptions;
+
+            string? name = null;
+
+            foreach (var raw in stdOut.Split('\n'))
+            {
+                var line = raw.Trim();
+
+                if (line.StartsWith("Name:", StringComparison.Ordinal))
+                {
+                    name = line["Name:".Length..].Trim();
+                }
+                else if (name is not null && line.StartsWith("Description:", StringComparison.Ordinal))
+                {
+                    descriptions[name] = line["Description:".Length..].Trim();
+                    name = null;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Only costs us nicer names, so it must never be fatal.
+            logger.LogDebug(ex, "Couldn't read source descriptions from pactl's text output");
+        }
+
+        return descriptions;
     }
 
     private async Task<string?> GetDefaultSourceAsync()

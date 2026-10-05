@@ -90,13 +90,14 @@ public class OllamaLanguageModelService : ILanguageModelService
     }
 
     public async Task<string> GenerateResponseAsync(
-        string summary, 
-        string recentTranscript, 
+        string summary,
+        string recentTranscript,
+        string question,
         CancellationToken cancellationToken = default)
     {
         _logger.LogInformation("Generating response via Ollama");
 
-        var prompt = _promptService.BuildResponsePrompt(summary, recentTranscript);
+        var prompt = _promptService.BuildResponsePrompt(summary, recentTranscript, question);
 
         try
         {

@@ -8,6 +8,9 @@ namespace API.Services.Implementations;
 /// </summary>
 public class MockAudioDeviceService : IAudioDeviceService
 {
+    /// <inheritdoc />
+    public event EventHandler? SelectionChanged;
+
     private readonly ILogger<MockAudioDeviceService> _logger;
     private List<AudioDeviceInfo> _selectedDevices = [];
     private List<AudioDeviceInfo>? _cachedDevices;
